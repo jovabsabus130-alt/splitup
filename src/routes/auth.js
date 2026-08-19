@@ -4,8 +4,10 @@ const jwt = require('jsonwebtoken');
 const { z } = require('zod');
 
 const prisma = require('../lib/prisma');
+const { sanitizeMiddleware } = require('../middleware/sanitize');
 
 const router = express.Router();
+router.use(sanitizeMiddleware);
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 

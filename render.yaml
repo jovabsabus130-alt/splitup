@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: splitup-backend
+    env: node
+    plan: free
+    buildCommand: npm install && npx prisma generate
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: splitup-postgres
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: PORT
+        value: 5000
+
+databases:
+  - name: splitup-postgres
+    databaseName: splitup
+    plan: free
