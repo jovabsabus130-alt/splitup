@@ -40,7 +40,7 @@ This document maps all **63 Project Score concepts** (including all **25 mandato
 | **23** | NoSQL (Mongo) | **Aggregation pipelines** | No | 0.2 | `src/routes/shopping.js` | MongoDB aggregation queries calculating group-level shopping category price totals and completion rates. |
 | **24** | NoSQL (Mongo) | **Indexing for performance (Mongo)** | No | 0.2 | `src/models/` | Compound indexing on `{ groupId: 1, createdAt: -1 }` for rapid chronological query resolution. |
 | **25** | SQL (Postgres) | **Relational schema design (PK/FK)** | **Yes** | 0.2 | `prisma/schema.prisma` | Primary Keys (`@id @default(cuid())`), Foreign Keys (`fields: [groupId], references: [id]`), Cascade Deletion rules. |
-| **26** | SQL (Postgres) | **SQL JOINs** | **Yes** | 0.2 | `src/routes/groups.js`, `src/routes/expenses.js` | Prisma relational `include` queries generating SQL `LEFT JOIN` / `INNER JOIN` across Users, Expenses, and ExpenseSplits. |
+| **26** | SQL (Postgres) | **SQL JOINs** | **Yes** | 0.2 | `src/services/sqlLedgerQueries.js`, `src/routes/groups.js` | Direct implementation of `INNER JOIN` (expenses + splits + users) and `LEFT JOIN` with aggregations (`COALESCE(SUM(share))`), plus Prisma relational joins. |
 | **27** | SQL (Postgres) | **Indexing for performance (SQL)** | No | 0.2 | `prisma/schema.prisma` | Unique composite indices (`@@id([userId, groupId])`, `@@unique([expenseId, userId])`, `@@unique([groupId, userId])`). |
 | **28** | SQL (Postgres) | **Filtering, ordering, grouping** | No | 0.2 | `src/routes/groups.js` (L417-L433), `src/routes/balances.js` | `where: { status: 'pending' }`, `orderBy: { createdAt: 'desc' }`, `take: 10`. |
 | **29** | SQL (Postgres) | **Normalization basics** | No | 0.2 | `prisma/schema.prisma` | Normalized to **3NF**: Eliminates data duplication by decoupling `Expense` header from per-user `ExpenseSplit` records. |
@@ -62,9 +62,9 @@ This document maps all **63 Project Score concepts** (including all **25 mandato
 | **45** | AI App Eng | **Prompt injection defenses** | No | 0.3 | `src/routes/aiExpense.js` | System prompt isolation and strict Zod post-validation preventing system instruction overrides. |
 | **46** | AI App Eng | **Token & cost monitoring** | No | 0.3 | `src/models/AiParseLog.js` | Logs prompt tokens, completion tokens, and latency to MongoDB for cost tracking. |
 | **47** | AI App Eng | **Multi-step agent** | No | 1.0 | AI Roadmap | Multi-step agent orchestrating expense parsing $\rightarrow$ member matching $\rightarrow$ confirmation dialog. |
-| **48** | Engineering Practices | **Git workflow** | **Yes** | 0.3 | `.gitignore`, GitHub repo commit history | Feature branching, clean atomic commits, pull requests, `.gitignore` excluding `node_modules` and `.env`. |
+| **48** | Engineering Practices | **Git workflow** | **Yes** | 0.3 | `GIT_WORKFLOW.md`, `.gitignore`, Commit history | Comprehensive GitHub Flow guide, conventional commit specifications, feature branching, and PR review process. |
 | **49** | Engineering Practices | **Environment variables & secrets** | **Yes** | 0.2 | `.env`, `.env.example`, `src/index.js` | `process.env.DATABASE_URL`, `JWT_SECRET`, `GROQ_API_KEY`, `VITE_API_URL` cleanly decoupled with `.env.example` templates. |
-| **50** | Engineering Practices | **Writing unit tests** | No | 0.3 | `src/__tests__/debtSimplification.test.js` | Native Node test runner (`node:test`) testing algorithm correctness, zero-balance handling, and precision limits. |
+| **50** | Engineering Practices | **Writing unit tests** | No | 0.3 | `src/__tests__/debtSimplification.test.js`, `src/__tests__/jsCoreConcepts.test.js` | Automated unit test suite using native Node test runner (`node:test`) testing algorithm correctness, event loop, and precision limits. |
 | **51** | Engineering Practices | **Containerization with Docker** | No | 0.5 | `Dockerfile`, `docker-compose.yml` | Multi-stage Docker build containerizing Express backend and PostgreSQL database. |
 | **52** | Engineering Practices | **Automated API testing** | No | 0.2 | `npm test`, Postman Collection | Automated test scripts verifying end-to-end endpoint contracts. |
 | **53** | System & Integration | **Caching with Redis** | No | 0.4 | Architecture roadmap | In-memory caching for frequently fetched group balances and member lists. |
@@ -73,11 +73,11 @@ This document maps all **63 Project Score concepts** (including all **25 mandato
 | **56** | System & Integration | **Server-side rendering** | No | 0.5 | Architecture discussion | Comparison between CSR (Vite SPA) and SSR (Next.js) for authenticated dashboards vs public landing pages. |
 | **57** | System & Integration | **Payment gateway integration** | No | 0.5 | UPI intent integration & Stripe test mode | UPI Intent URL generation (`upi://pay?pa=...`) and Stripe test webhook architecture. |
 | **58** | System & Integration | **3rd-party API integration** | No | 0.3 | Groq / Gemini API, Nodemailer SMTP | External REST integrations with error handling and exponential timeout retries. |
-| **59** | Frontend (JS) | **JavaScript — Event loop** | **Yes** | 0.1 | `src/index.js`, Frontend API calls | Non-blocking asynchronous I/O execution: microtask queue (Promises) vs macrotask queue (`setTimeout`, I/O). |
-| **60** | Frontend (JS) | **JavaScript — Promises vs callbacks** | **Yes** | 0.1 | `src/routes/`, `frontend/src/pages/` | Modern Promise-based API handling avoiding callback hell via standard `Promise.all` concurrency. |
+| **59** | Frontend (JS) | **JavaScript — Event loop** | **Yes** | 0.1 | `src/utils/jsCoreConcepts.js`, `src/__tests__/jsCoreConcepts.test.js` | Demonstrated & tested non-blocking Event Loop execution order: Microtasks (`Promise.then`) run before Macrotasks (`setTimeout`). |
+| **60** | Frontend (JS) | **JavaScript — Promises vs callbacks** | **Yes** | 0.1 | `src/utils/jsCoreConcepts.js`, `src/__tests__/jsCoreConcepts.test.js` | Demonstrated & tested error-first callback pattern vs composable Promises with `Promise.all` concurrency. |
 | **61** | Frontend (JS) | **JavaScript — async/await** | **Yes** | 0.1 | Across all controllers & React effects | Clean, linear asynchronous control flow with `try/catch/finally` exception management. |
-| **62** | Frontend (JS) | **JavaScript — Closures** | **Yes** | 0.1 | `src/middleware/auth.js`, React Hook handlers | Functions capturing lexical scope variables (e.g., higher-order middleware, React `useMemo` hooks). |
-| **63** | Frontend (JS) | **JavaScript — Hoisting** | **Yes** | 0.1 | JavaScript source files | Distinction between hoisted function declarations vs `let`/`const` Temporal Dead Zone (TDZ). |
+| **62** | Frontend (JS) | **JavaScript — Closures** | **Yes** | 0.1 | `src/utils/jsCoreConcepts.js`, `src/middleware/auth.js` | Functions capturing lexical scope variables (e.g., rate limiter closures, React hook handlers). |
+| **63** | Frontend (JS) | **JavaScript — Hoisting** | **Yes** | 0.1 | `src/utils/jsCoreConcepts.js`, `src/__tests__/jsCoreConcepts.test.js` | Demonstrated & tested function declaration hoisting vs `let`/`const` Temporal Dead Zone (TDZ) boundaries. |
 
 ---
 
