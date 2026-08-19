@@ -7,7 +7,6 @@
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Prisma-336791)](https://www.prisma.io/)
 [![MongoDB](https://img.shields.io/badge/MongoDB-Mongoose-47A248)](https://www.mongodb.com/)
 [![React](https://img.shields.io/badge/React-18-61DAFB)](https://react.dev)
-[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ---
 
@@ -15,11 +14,10 @@
 1. [Overview](#overview)
 2. [Key Features](#key-features)
 3. [Architecture & Polyglot Persistence](#architecture--polyglot-persistence)
-4. [Project Score & Viva Defense Documentation](#project-score--viva-defense-documentation)
-5. [Tech Stack](#tech-stack)
-6. [Getting Started](#getting-started)
-7. [Running Tests](#running-tests)
-8. [API Reference](#api-reference)
+4. [Tech Stack](#tech-stack)
+5. [Getting Started](#getting-started)
+6. [Running Tests](#running-tests)
+7. [API Reference](#api-reference)
 
 ---
 
@@ -33,7 +31,6 @@
 - 🧾 **Flexible Multi-Member Splits:** Split expenses equally or by exact shares with member exclusion checkboxes and a **Live Remaining Balance Indicator**.
 - ⚖️ **Algorithmic Debt Simplification:** Graph reduction algorithm ($O(N \log N)$) converting dense $O(N^2)$ bilateral debts into minimal settlement transfers.
 - 🤖 **AI Natural Language Parsing:** Type free-form text like *"Cab ₹900 paid by John split with Alex and Sarah"* — our LLM pipeline automatically structures the amount, category, and split ratios.
-- 💳 **Direct UPI Settlements:** One-click UPI QR generator and payment intent links for instant mobile settlement.
 - 🛒 **Shared Collaborative Shopping List:** Real-time group shopping checklist with item prices.
 
 ---
@@ -53,15 +50,13 @@ flowchart LR
 
 ---
 
-## 📚 Project Score & Viva Defense Documentation
+## 📚 Documentation
 
-SplitUp includes complete engineering documentation aligned with the **Project Score Rubric (63 Concepts / 25 Mandatory)**:
+SplitUp includes complete engineering documentation:
 
 - 📄 [**PRD.md**](./PRD.md) — Product Requirements Document (Problem statement, personas, user journeys, functional & non-functional requirements).
 - 📐 [**HLD.md**](./HLD.md) — High-Level Design (System architecture diagrams, sequence workflows, polyglot persistence rationale).
 - 🔧 [**LLD.md**](./LLD.md) — Low-Level Design (Database schemas, API specifications, algorithmic design, component hierarchy).
-- 🎯 [**PROJECT_SCORE.md**](./PROJECT_SCORE.md) — Complete 63-concept viva defense matrix mapping each rubric item to exact code lines and engineering justifications.
-
 ---
 
 ## 🛠️ Tech Stack
@@ -134,6 +129,3 @@ npm test
 *Tests the Debt Simplification algorithm, balance calculations, precision limits, and edge cases.*
 
 ---
-
-## 📄 License
-This project is open-source and available under the [MIT License](LICENSE).
