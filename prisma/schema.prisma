@@ -1,0 +1,133 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id               String        @id @default(cuid())
+  name             String
+  email            String        @unique
+  passwordHash     String
+  phone            String?
+  upiId            String?
+  emailVerified    Boolean       @default(false)
+  createdAt        DateTime      @default(now())
+  groupMemberships GroupMember[]
+  adminOfGroups    Group[]       @relation("GroupAdmin")
+  joinRequests     JoinRequest[]
+  paidExpenses     Expense[]     @relation("ExpensePaidBy")
+  expenseSplits    ExpenseSplit[]
+  settlementsFrom  Settlement[]  @relation("SettlementFrom")
+  settlementsTo    Settlement[]  @relation("SettlementTo")
+  confirmedSettlements Settlement[]  @relation("SettlementConfirmedBy")
+  otpCodes         OtpCode[]
+  shoppingItems    ShoppingItem[]
+}
+
+model Group {
+  id            String         @id @default(cuid())
+  name          String
+  adminId       String
+  createdAt     DateTime       @default(now())
+  members       GroupMember[]
+  expenses      Expense[]
+  settlements   Settlement[]
+  joinRequests  JoinRequest[]
+  shoppingItems ShoppingItem[]
+
+  admin User @relation("GroupAdmin", fields: [adminId], references: [id], onDelete: Restrict)
+}
+
+model GroupMember {
+  userId  String
+  groupId String
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@id([userId, groupId])
+}
+
+model JoinRequest {
+  id        String   @id @default(cuid())
+  groupId   String
+  userId    String
+  status    String   @default("pending")
+  createdAt DateTime @default(now())
+
+  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, userId])
+}
+
+model Expense {
+  id          String        @id @default(cuid())
+  groupId     String
+  paidById    String
+  amount      Decimal       @db.Decimal(12, 2)
+  category    String
+  description String?
+  createdAt   DateTime      @default(now())
+
+  group    Group   @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  paidBy   User    @relation("ExpensePaidBy", fields: [paidById], references: [id], onDelete: Restrict)
+  splits   ExpenseSplit[]
+}
+
+model ExpenseSplit {
+  id         String   @id @default(cuid())
+  expenseId   String
+  userId      String
+  share       Decimal  @db.Decimal(12, 2)
+
+  expense    Expense @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+  user       User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([expenseId, userId])
+}
+
+model Settlement {
+  id            String    @id @default(cuid())
+  groupId       String
+  fromId        String
+  toId          String
+  amount        Decimal   @db.Decimal(12, 2)
+  status        String    @default("pending")
+  confirmedById String?
+  confirmedAt   DateTime?
+  createdAt     DateTime  @default(now())
+
+  group       Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  from        User  @relation("SettlementFrom", fields: [fromId], references: [id], onDelete: Cascade)
+  to          User  @relation("SettlementTo", fields: [toId], references: [id], onDelete: Cascade)
+  confirmedBy User? @relation("SettlementConfirmedBy", fields: [confirmedById], references: [id], onDelete: SetNull)
+}
+
+model OtpCode {
+  id        String   @id @default(cuid())
+  userId    String
+  code      String
+  expiresAt DateTime
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model ShoppingItem {
+  id          String   @id @default(cuid())
+  groupId     String
+  addedById   String
+  name        String
+  price       Decimal? @db.Decimal(12, 2)
+  completed   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  group     Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  addedBy   User  @relation(fields: [addedById], references: [id], onDelete: Cascade)
+}
