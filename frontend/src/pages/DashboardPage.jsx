@@ -74,10 +74,10 @@ export default function DashboardPage() {
   return (
     <>
       {/* ── Page Header ── */}
-      <div className="page-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+      <div className="page-header">
         <div>
           <h1>Dashboard</h1>
-          <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginTop: '2px' }}>
+          <p>
             Select a group to log expenses or view net balance sheets
           </p>
         </div>
@@ -86,7 +86,6 @@ export default function DashboardPage() {
             type="button"
             className="btn-primary"
             onClick={() => setShowCreateModal(true)}
-            style={{ height: '38px', fontSize: '13px' }}
           >
             + New Group
           </button>
@@ -116,38 +115,31 @@ export default function DashboardPage() {
 
       {/* ── Direct Groups View ── */}
       {loading ? (
-        <div style={{ padding: '48px 0', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '13.5px' }}>
+        <div style={{ padding: 'var(--space-10) 0', textAlign: 'center', color: 'var(--text-secondary)' }}>
           Loading your groups…
         </div>
       ) : groups.length === 0 ? (
         /* ── Empty State: No groups yet ── */
         <div
+          className="card"
           style={{
             textAlign: 'center',
-            padding: '64px 24px',
-            backgroundColor: '#FFFFFF',
-            border: '1px solid var(--border-subtle)',
-            borderRadius: 'var(--radius-lg)',
-            boxShadow: 'var(--shadow-card)',
-            display: 'flex',
-            flexDirection: 'column',
+            padding: 'var(--space-12) var(--space-6)',
             alignItems: 'center',
             justifyContent: 'center',
             gap: 'var(--space-3)',
           }}
         >
-          <div style={{ fontSize: '40px', lineHeight: 1, marginBottom: '4px' }}>👥</div>
-          <h2 style={{ fontSize: '18px', fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>
-            No groups yet
-          </h2>
-          <p style={{ color: 'var(--text-secondary)', fontSize: '13.5px', maxWidth: '360px', margin: 0 }}>
+          <div style={{ fontSize: '32px', lineHeight: 1 }}>👥</div>
+          <h2>No groups yet</h2>
+          <p style={{ maxWidth: '360px' }}>
             You don't belong to any groups yet. Create your first group to start logging expenses and tracking shared balances.
           </p>
           <button
             type="button"
             className="btn-primary"
             onClick={() => setShowCreateModal(true)}
-            style={{ marginTop: 'var(--space-2)', padding: '0 20px', height: '40px', fontSize: '13.5px' }}
+            style={{ marginTop: 'var(--space-2)' }}
           >
             + Create your first group
           </button>
@@ -164,50 +156,37 @@ export default function DashboardPage() {
           {groups.map((group) => (
             <div
               key={group.id}
+              className="card"
               style={{
-                backgroundColor: '#FFFFFF',
-                border: '1px solid var(--border-subtle)',
-                borderRadius: 'var(--radius-lg)',
-                padding: 'var(--space-5)',
-                boxShadow: 'var(--shadow-card)',
-                display: 'flex',
-                flexDirection: 'column',
-                justifyContent: 'space-between',
+                padding: 'var(--space-4)',
                 gap: 'var(--space-4)',
-                transition: 'transform 0.15s ease, box-shadow 0.15s ease',
+                justifyContent: 'space-between',
               }}
             >
               <div style={{ display: 'flex', alignItems: 'flex-start', gap: 'var(--space-3)' }}>
                 <div
                   className="group-avatar-mini"
                   style={{
-                    width: '38px',
-                    height: '38px',
-                    fontSize: '15px',
-                    fontWeight: 700,
-                    backgroundColor: 'var(--bg-subtle)',
-                    border: '1px solid var(--border-subtle)',
-                    borderRadius: 'var(--radius-md)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    flexShrink: 0,
+                    width: '34px',
+                    height: '34px',
+                    fontSize: '14px',
+                    borderRadius: 'var(--radius-sm)',
                   }}
                 >
                   {group.name.charAt(0).toUpperCase()}
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
-                    <span style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: '15px' }}>
+                    <span style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '14px' }}>
                       {group.name}
                     </span>
                     {group.isAdmin && (
-                      <span className="admin-pill" style={{ fontSize: '11px' }}>Admin</span>
+                      <span className="admin-pill">Admin</span>
                     )}
                   </div>
                   {group.pendingRequestsCount > 0 && (
-                    <div style={{ fontSize: '12px', color: 'var(--danger)', fontWeight: 600, marginTop: '4px' }}>
-                      {group.pendingRequestsCount} pending join {group.pendingRequestsCount === 1 ? 'request' : 'requests'}
+                    <div style={{ fontSize: '12px', color: 'var(--danger)', fontWeight: 500, marginTop: '2px' }}>
+                      {group.pendingRequestsCount} pending {group.pendingRequestsCount === 1 ? 'request' : 'requests'}
                     </div>
                   )}
                 </div>
@@ -224,14 +203,14 @@ export default function DashboardPage() {
                 <Link
                   to={`/groups/${group.id}`}
                   className="btn-primary"
-                  style={{ flex: 1, height: '34px', fontSize: '12.5px', textDecoration: 'none' }}
+                  style={{ flex: 1, height: '30px', fontSize: '12.5px' }}
                 >
                   Open Group
                 </Link>
                 <Link
                   to={`/groups/${group.id}/balances`}
                   className="btn-secondary"
-                  style={{ flex: 1, height: '34px', fontSize: '12.5px', textDecoration: 'none' }}
+                  style={{ flex: 1, height: '30px', fontSize: '12.5px' }}
                 >
                   Balances
                 </Link>
@@ -267,7 +246,7 @@ export default function DashboardPage() {
               <input
                 value={newGroupName}
                 onChange={(e) => setNewGroupName(e.target.value)}
-                placeholder="e.g. Goa Trip, Flat 301, Office Lunch"
+                placeholder="Group name (e.g. Weekend Trip)"
                 autoFocus
                 required
               />

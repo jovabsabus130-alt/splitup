@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import Navbar from '../components/Navbar';
 import api from '../lib/api';
 
 export default function BalancesPage() {

@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import Navbar from '../components/Navbar';
 import ShareModal from '../components/ShareModal';
 import ShoppingListSection from '../components/ShoppingListSection';
 import api from '../lib/api';
@@ -71,15 +70,6 @@ export default function GroupDetailPage() {
     }
   }
 
-  async function loadJoinRequests() {
-    try {
-      const { data } = await api.get(`/api/groups/${groupId}/join-requests`);
-      setJoinRequests(data.requests || []);
-    } catch {
-      // Not admin, or none — silently ignore
-    }
-  }
-
   useEffect(() => {
     loadGroupData();
   }, [groupId]);
@@ -93,8 +83,8 @@ export default function GroupDetailPage() {
     }
   }, [members, currentUserId, paidById]);
 
-  // Helper: Distribute total cents equally without rounding discrepancies (no -0.01 cents error)
-  function computeEvenSplits(amountVal, memberList, excludedMap) {
+  // Helper: Distribute total cents equally, letting the buyer (payer) absorb any remainder cents (e.g. ₹0.01)
+  function computeEvenSplits(amountVal, memberList, excludedMap, payerId) {
     const included = memberList.filter((m) => !excludedMap[m.id]);
     if (!included.length || !amountVal || Number(amountVal) <= 0) {
       const empty = {};
@@ -104,26 +94,31 @@ export default function GroupDetailPage() {
     const totalCents = Math.round(Number(amountVal) * 100);
     const count = included.length;
     const baseCents = Math.floor(totalCents / count);
-    let remainderCents = totalCents - baseCents * count;
+    const remainderCents = totalCents - baseCents * count;
+
+    // The buyer absorbs remainder cents if included in the split, otherwise the first included member
+    const absorbsId = included.some((m) => m.id === payerId) ? payerId : included[0]?.id;
 
     const next = {};
     for (const m of memberList) {
       if (excludedMap[m.id]) {
         next[m.id] = '0.00';
       } else {
-        const centsForMember = baseCents + (remainderCents > 0 ? 1 : 0);
-        if (remainderCents > 0) remainderCents--;
+        const centsForMember = baseCents + (m.id === absorbsId ? remainderCents : 0);
         next[m.id] = (centsForMember / 100).toFixed(2);
       }
     }
     return next;
   }
 
+  // Calculate current user's live impact on this expense
+  const effectivePayerId = paidById || currentUserId || members[0]?.id;
+
   // Recompute even split across included members only when not in custom split mode
   useEffect(() => {
     if (!members.length || isCustomSplit) return;
-    setMemberShares(computeEvenSplits(form.amount, members, excludedMembers));
-  }, [members.length, form.amount, excludedMembers, isCustomSplit]);
+    setMemberShares(computeEvenSplits(form.amount, members, excludedMembers, effectivePayerId));
+  }, [members.length, form.amount, excludedMembers, isCustomSplit, effectivePayerId]);
 
   // Live remaining amount with precision tolerance
   const totalAmount = Number(form.amount) || 0;
@@ -132,11 +127,9 @@ export default function GroupDetailPage() {
   }, 0);
   const rawDiff = totalAmount - allocatedAmount;
   const remainingAmount = Math.abs(rawDiff) < 0.005 ? 0 : Number(rawDiff.toFixed(2));
-  const isSplitBalanced = Math.abs(remainingAmount) < 0.01;
+  const isSplitBalanced = Math.abs(remainingAmount) <= 0.01;
   const isSplitOver = remainingAmount < -0.01;
 
-  // Calculate current user's live impact on this expense
-  const effectivePayerId = paidById || currentUserId || members[0]?.id;
   const currentUserIsPayer = effectivePayerId === currentUserId;
   const currentUserPaid = currentUserIsPayer ? totalAmount : 0;
   const currentUserShare = (currentUserId && !excludedMembers[currentUserId]) ? (Number(memberShares[currentUserId]) || 0) : 0;
@@ -144,7 +137,7 @@ export default function GroupDetailPage() {
 
   function resetToEvenSplit() {
     setIsCustomSplit(false);
-    setMemberShares(computeEvenSplits(form.amount, members, excludedMembers));
+    setMemberShares(computeEvenSplits(form.amount, members, excludedMembers, effectivePayerId));
   }
 
   async function parseWithAI() {
@@ -227,16 +220,27 @@ export default function GroupDetailPage() {
     setMessage('');
     try {
       // Only include members that are not excluded
-      const splits = Object.entries(memberShares)
+      const payloadPayer = paidById || currentUserId || members[0]?.id;
+      let splits = Object.entries(memberShares)
         .filter(([userId]) => !excludedMembers[userId])
         .map(([userId, share]) => ({
           userId,
           share: Number(share),
         }));
 
-      const payloadPayer = paidById || currentUserId || members[0]?.id;
+      // Absorb rounding discrepancy (<= ₹0.01) directly into the buyer's split share
+      const totalSplitsSum = splits.reduce((sum, s) => sum + s.share, 0);
+      const diff = Number((Number(form.amount) - totalSplitsSum).toFixed(2));
+      if (Math.abs(diff) <= 0.01 && diff !== 0) {
+        const buyerSplit = splits.find((s) => s.userId === payloadPayer);
+        if (buyerSplit) {
+          buyerSplit.share = Number((buyerSplit.share + diff).toFixed(2));
+        } else if (splits.length > 0) {
+          splits[0].share = Number((splits[0].share + diff).toFixed(2));
+        }
+      }
 
-      const { data } = await api.post(`/api/groups/${groupId}/expenses`, {
+      await api.post(`/api/groups/${groupId}/expenses`, {
         amount: Number(form.amount),
         category: form.category,
         description: form.description,
@@ -244,7 +248,6 @@ export default function GroupDetailPage() {
         splits,
       });
 
-      const added = data.expense;
       const payerName = members.find((m) => m.id === payloadPayer)?.name || 'Someone';
       setLastAddedExpense({
         amount: Number(form.amount),
@@ -448,7 +451,7 @@ export default function GroupDetailPage() {
               value={parseText}
               disabled={isParsing}
               onChange={(event) => setParseText(event.target.value)}
-              placeholder="e.g. I and Jovab rented a car for 5000 (paid by me) and markose paid 450 for lunch"
+              placeholder="e.g. Paid ₹1,200 for dinner split with Alex and Sam..."
             />
             <div>
               <button
@@ -480,7 +483,7 @@ export default function GroupDetailPage() {
                     </div>
                     <div style={{ display: 'grid', gap: '4px', fontSize: '13px', color: 'var(--text-secondary)' }}>
                       {parseResult.breakdownExplanation.split(/(?<=[.!?])\s+/).filter(Boolean).map((line, idx) => (
-                        <div key={idx} style={{ display: 'flex', alignItems: 'flex-start', gap: 'var(--space-1)' }}>
+                         <div key={idx} style={{ display: 'flex', alignItems: 'flex-start', gap: 'var(--space-1)' }}>
                           <span style={{ color: 'var(--success)' }}>&bull;</span>
                           <span>{line}</span>
                         </div>
@@ -507,7 +510,7 @@ export default function GroupDetailPage() {
                   <input
                     type="number"
                     step="0.01"
-                    placeholder="500.00"
+                    placeholder="0.00"
                     value={form.amount}
                     onChange={(event) => setForm((prev) => ({ ...prev, amount: event.target.value }))}
                     required
@@ -532,7 +535,7 @@ export default function GroupDetailPage() {
                 <label>
                   Category
                   <input
-                    placeholder="Food, Travel, Utilities"
+                    placeholder="e.g. Food, Travel, Utilities"
                     value={form.category}
                     onChange={(event) => setForm((prev) => ({ ...prev, category: event.target.value }))}
                     required
@@ -542,7 +545,7 @@ export default function GroupDetailPage() {
                 <label>
                   Description (optional)
                   <input
-                    placeholder="Dinner at cafe"
+                    placeholder="e.g. Dinner, Groceries"
                     value={form.description}
                     onChange={(event) => setForm((prev) => ({ ...prev, description: event.target.value }))}
                   />

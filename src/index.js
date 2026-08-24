@@ -12,6 +12,7 @@ const aiExpenseRoutes = require('./routes/aiExpense');
 const shoppingRoutes = require('./routes/shopping');
 const { settlementsRouter } = require('./routes/settlements');
 const dashboardRoutes = require('./routes/dashboard');
+require('./services/cronService'); // Initialize background cron tasks & keep-alive ping
 
 const app = express();
 const PORT = process.env.PORT || 5000;

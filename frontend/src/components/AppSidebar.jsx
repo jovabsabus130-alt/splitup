@@ -193,7 +193,7 @@ export default function AppSidebar({ mobileOpen, onCloseMobile, onGroupCreated }
               <input
                 value={newGroupName}
                 onChange={(e) => setNewGroupName(e.target.value)}
-                placeholder="e.g. Goa Trip, Apartment 402"
+                placeholder="Group name (e.g. Weekend Trip)"
                 autoFocus
                 required
               />

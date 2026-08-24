@@ -78,7 +78,7 @@ export default function JoinRequestPage() {
             <div className="success-text">
               Your request was sent to the group admin. You'll gain access once approved.
             </div>
-            <Link to="/dashboard" className="btn-secondary" style={{ width: '100%', height: '40px' }}>
+            <Link to="/dashboard" className="btn-secondary" style={{ width: '100%' }}>
               Return to Dashboard
             </Link>
           </div>
@@ -87,7 +87,7 @@ export default function JoinRequestPage() {
             <div className="success-text">
               You are already a member of this group.
             </div>
-            <Link to={`/groups/${groupId}`} className="btn-primary" style={{ width: '100%', height: '40px' }}>
+            <Link to={`/groups/${groupId}`} className="btn-primary" style={{ width: '100%' }}>
               Open Group
             </Link>
           </div>
@@ -106,12 +106,12 @@ export default function JoinRequestPage() {
               className="btn-primary"
               onClick={handleRequest}
               disabled={status === 'loading' || (status === 'error' && errorMsg.includes('invalid'))}
-              style={{ width: '100%', height: '42px' }}
+              style={{ width: '100%' }}
             >
               {status === 'loading' ? 'Sending request…' : 'Request to Join'}
             </button>
 
-            <Link to="/dashboard" className="btn-secondary" style={{ width: '100%', height: '40px' }}>
+            <Link to="/dashboard" className="btn-secondary" style={{ width: '100%' }}>
               Cancel
             </Link>
           </div>

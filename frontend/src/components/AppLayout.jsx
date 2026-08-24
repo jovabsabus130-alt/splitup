@@ -1,10 +1,9 @@
 import { useState } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import AppSidebar from './AppSidebar';
 
 export default function AppLayout({ children }) {
   const [mobileOpen, setMobileOpen] = useState(false);
-  const location = useLocation();
 
   return (
     <div className="app-layout">

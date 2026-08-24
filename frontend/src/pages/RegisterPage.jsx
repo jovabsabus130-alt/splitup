@@ -49,32 +49,32 @@ export default function RegisterPage() {
         </div>
 
         <form onSubmit={handleSubmit} className="form-grid">
-          <label style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-1)', fontSize: '12px', fontWeight: 500, color: 'var(--text-secondary)' }}>
+          <label className="form-label">
             Full Name
             <input
               value={form.name}
-              placeholder="e.g. Jovab Sabu"
+              placeholder="Full name"
               onChange={(event) => setForm((prev) => ({ ...prev, name: event.target.value }))}
               required
             />
           </label>
 
-          <label style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-1)', fontSize: '12px', fontWeight: 500, color: 'var(--text-secondary)' }}>
+          <label className="form-label">
             Email Address
             <input
               type="email"
-              placeholder="you@example.com"
+              placeholder="name@example.com"
               value={form.email}
               onChange={(event) => setForm((prev) => ({ ...prev, email: event.target.value }))}
               required
             />
           </label>
 
-          <label style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-1)', fontSize: '12px', fontWeight: 500, color: 'var(--text-secondary)' }}>
+          <label className="form-label">
             Password
             <input
               type="password"
-              placeholder="•••••••• (min. 6 characters)"
+              placeholder="At least 6 characters"
               value={form.password}
               onChange={(event) => setForm((prev) => ({ ...prev, password: event.target.value }))}
               required
@@ -83,13 +83,13 @@ export default function RegisterPage() {
           </label>
 
           {error ? <div className="error-text">{error}</div> : null}
-          <button type="submit" className="btn-primary" disabled={loading} style={{ width: '100%', marginTop: 'var(--space-1)', height: '42px' }}>
+          <button type="submit" className="btn-primary" disabled={loading} style={{ width: '100%', marginTop: 'var(--space-1)' }}>
             {loading ? 'Creating account…' : 'Create account'}
           </button>
         </form>
 
         <p style={{ textAlign: 'center', fontSize: '13px', color: 'var(--text-secondary)' }}>
-          Already have an account? <Link to="/login" state={location.state} style={{ color: 'var(--accent-primary)', fontWeight: 600 }}>Sign in</Link>
+          Already have an account? <Link to="/login" state={location.state} style={{ color: 'var(--text-primary)', fontWeight: 600 }}>Sign in</Link>
         </p>
 
         <div className="auth-trust-footer">

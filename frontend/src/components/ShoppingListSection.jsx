@@ -74,18 +74,26 @@ export default function ShoppingListSection({ groupId, members, currentUserId, o
     }
   }
 
-  // Open split panel for an item — initialise even shares among all members
+  // Open split panel for an item — initialise even shares among all members with buyer absorbing rounding difference
   function openSplitPanel(item) {
     if (splitOpenId === item.id) { setSplitOpenId(null); return; }
     setSplitOpenId(item.id);
     const price = Number(item.price) || 0;
-    const evenShare = members.length ? (price / members.length).toFixed(2) : '0.00';
+    const buyerId = currentUserId || members[0]?.id || '';
+    const totalCents = Math.round(price * 100);
+    const count = members.length;
+    const baseCents = count ? Math.floor(totalCents / count) : 0;
+    const remainderCents = count ? totalCents - baseCents * count : 0;
+
     const shares = {};
     const excluded = {};
-    for (const m of members) shares[m.id] = evenShare;
+    for (const m of members) {
+      const cents = baseCents + (m.id === buyerId ? remainderCents : 0);
+      shares[m.id] = (cents / 100).toFixed(2);
+    }
     setSplitState((prev) => ({
       ...prev,
-      [item.id]: { paidById: currentUserId || members[0]?.id || '', shares, excluded },
+      [item.id]: { paidById: buyerId, shares, excluded },
     }));
   }
 
@@ -93,15 +101,31 @@ export default function ShoppingListSection({ groupId, members, currentUserId, o
     const state = splitState[item.id];
     if (!state) return;
 
-    const splits = members
+    const itemPrice = Number(item.price) || 0;
+    const buyerId = state.paidById || currentUserId || members[0]?.id;
+
+    let splits = members
       .filter((m) => !state.excluded[m.id])
       .map((m) => ({ userId: m.id, share: Number(state.shares[m.id]) || 0 }))
       .filter((s) => s.share > 0);
 
+    const totalSplit = splits.reduce((sum, s) => sum + s.share, 0);
+    const diff = Number((itemPrice - totalSplit).toFixed(2));
+
+    // Absorb rounding difference (<= ₹0.01) into buyer's share
+    if (Math.abs(diff) <= 0.01 && diff !== 0) {
+      const buyerSplit = splits.find((s) => s.userId === buyerId);
+      if (buyerSplit) {
+        buyerSplit.share = Number((buyerSplit.share + diff).toFixed(2));
+      } else if (splits.length > 0) {
+        splits[0].share = Number((splits[0].share + diff).toFixed(2));
+      }
+    }
+
     setError('');
     try {
       await api.post(`/api/groups/${groupId}/shopping/${item.id}/expense`, {
-        paidById: state.paidById,
+        paidById: buyerId,
         splits,
       });
       setSplitOpenId(null);
@@ -128,7 +152,7 @@ export default function ShoppingListSection({ groupId, members, currentUserId, o
       <form onSubmit={handleAddItem} style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
         <input
           type="text"
-          placeholder="e.g. Milk, Eggs, Bread"
+          placeholder="Item name (e.g. Milk, Bread)"
           value={newItemName}
           onChange={(e) => setNewItemName(e.target.value)}
           style={{ flex: 2, minWidth: '180px' }}
@@ -136,7 +160,7 @@ export default function ShoppingListSection({ groupId, members, currentUserId, o
         <input
           type="number"
           step="0.01"
-          placeholder="₹ Price (optional)"
+          placeholder="Price (optional)"
           value={newItemPrice}
           onChange={(e) => setNewItemPrice(e.target.value)}
           style={{ flex: 1, minWidth: '120px' }}
@@ -267,7 +291,7 @@ function ShoppingItemRow({
           <input
             type="number"
             step="0.01"
-            placeholder="₹ Price"
+            placeholder="0.00"
             style={{ width: '80px', height: '32px', padding: '4px 8px', fontSize: '13px', textAlign: 'right' }}
             value={localPrice}
             onChange={(e) => setLocalPrice(e.target.value)}

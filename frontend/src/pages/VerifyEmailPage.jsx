@@ -92,7 +92,7 @@ export default function VerifyEmailPage() {
     <div className="auth-page">
       <div className="auth-card">
         <div className="auth-header">
-          <div className="brand-logo" style={{ margin: '0 auto var(--space-3)' }}>S</div>
+          <div className="auth-brand-mark">S</div>
           <h1>Check your email</h1>
           <p>
             We sent a 6-digit code to <strong>{email || 'your email'}</strong>
