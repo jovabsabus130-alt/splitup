@@ -10,6 +10,7 @@ export default function BalancesPage() {
   const [history, setHistory] = useState([]);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
+  const [actionLoading, setActionLoading] = useState({});
 
   const currentUser = useMemo(() => {
     const raw = localStorage.getItem('splitup_user');
@@ -61,15 +62,54 @@ export default function BalancesPage() {
     };
   }, [balances, settlements, currentUser]);
 
-  async function handleMarkSettled(settlementId) {
+  // Borrower marks "I've Paid"
+  async function handleMarkPaid(settlementId) {
     setMessage('');
     setError('');
+    setActionLoading((prev) => ({ ...prev, [settlementId]: 'paying' }));
     try {
-      await api.post(`/api/groups/${groupId}/settlements/${settlementId}/settle`);
-      setMessage('Payment confirmed and balance updated! ✓');
+      const { data } = await api.post(`/api/groups/${groupId}/settlements/${settlementId}/pay`);
+      setMessage(data.message || 'Payment marked as sent! Waiting for receiver confirmation.');
       await loadData();
     } catch (apiError) {
-      setError(apiError.response?.data?.message || 'Failed to update settlement');
+      setError(apiError.response?.data?.message || 'Failed to update payment status');
+    } finally {
+      setActionLoading((prev) => ({ ...prev, [settlementId]: null }));
+    }
+  }
+
+  // Receiver confirms payment received
+  async function handleConfirmPayment(settlementId) {
+    setMessage('');
+    setError('');
+    setActionLoading((prev) => ({ ...prev, [settlementId]: 'confirming' }));
+    try {
+      const { data } = await api.post(`/api/groups/${groupId}/settlements/${settlementId}/confirm`);
+      setMessage(data.message || 'Payment confirmed and balance updated! ✓');
+      await loadData();
+    } catch (apiError) {
+      setError(apiError.response?.data?.message || 'Failed to confirm settlement');
+    } finally {
+      setActionLoading((prev) => ({ ...prev, [settlementId]: null }));
+    }
+  }
+
+  // Receiver rejects payment
+  async function handleRejectPayment(settlementId) {
+    const reason = window.prompt('Reason for rejecting payment (optional):', 'Payment not received');
+    if (reason === null) return;
+
+    setMessage('');
+    setError('');
+    setActionLoading((prev) => ({ ...prev, [settlementId]: 'rejecting' }));
+    try {
+      const { data } = await api.post(`/api/groups/${groupId}/settlements/${settlementId}/reject`, { reason });
+      setMessage(data.message || 'Payment rejected. The borrower has been notified.');
+      await loadData();
+    } catch (apiError) {
+      setError(apiError.response?.data?.message || 'Failed to reject settlement');
+    } finally {
+      setActionLoading((prev) => ({ ...prev, [settlementId]: null }));
     }
   }
 
@@ -144,48 +184,103 @@ export default function BalancesPage() {
               const isMyDebt = currentUser?.id === settlement.from;
               const isMyCredit = currentUser?.id === settlement.to;
               const isCompleted = settlement.status === 'completed';
+              const isPendingConfirmation = settlement.status === 'pending_confirmation';
+              const isRejected = settlement.status === 'rejected';
 
               return (
-                <li key={settlement.id}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
-                    <strong>{isMyDebt ? 'You' : settlement.fromName}</strong>
-                    <span style={{ color: 'var(--text-muted)' }}>&rarr;</span>
-                    <strong>{isMyCredit ? 'You' : settlement.toName}</strong>
+                <li key={settlement.id} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', flexWrap: 'wrap', gap: 'var(--space-2)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+                      <strong>{isMyDebt ? 'You' : settlement.fromName}</strong>
+                      <span style={{ color: 'var(--text-muted)' }}>&rarr;</span>
+                      <strong>{isMyCredit ? 'You' : settlement.toName}</strong>
+                    </div>
+
+                    <div className="row-actions" style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                      <strong style={{ fontVariantNumeric: 'tabular-nums', fontSize: '14px' }}>
+                        ₹{Number(settlement.amount).toFixed(2)}
+                      </strong>
+
+                      {isCompleted ? (
+                        <span className="impact-badge receive">Paid</span>
+                      ) : isPendingConfirmation ? (
+                        isMyCredit ? (
+                          /* Receiver sees Confirm as Paid & Reject Payment */
+                          <div style={{ display: 'flex', gap: '6px' }}>
+                            <button
+                              id={`reject-settle-${settlement.id}`}
+                              className="btn-danger"
+                              style={{ height: '30px', fontSize: '12px', padding: '0 10px' }}
+                              onClick={() => handleRejectPayment(settlement.id)}
+                              disabled={!!actionLoading[settlement.id]}
+                            >
+                              Reject
+                            </button>
+                            <button
+                              id={`confirm-settle-${settlement.id}`}
+                              className="btn-primary"
+                              style={{ height: '30px', fontSize: '12px', padding: '0 12px', backgroundColor: 'var(--success)', borderColor: 'var(--success)' }}
+                              onClick={() => handleConfirmPayment(settlement.id)}
+                              disabled={!!actionLoading[settlement.id]}
+                            >
+                              Confirm as Paid
+                            </button>
+                          </div>
+                        ) : (
+                          /* Borrower sees Awaiting Confirmation */
+                          <span
+                            className="impact-badge pay"
+                            style={{ background: 'var(--warning-bg)', color: 'var(--warning-text)', border: '1px solid var(--warning-border)' }}
+                          >
+                            ⏳ Awaiting Confirmation
+                          </span>
+                        )
+                      ) : isMyDebt ? (
+                        /* Borrower has not marked paid yet or was rejected */
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <button
+                            id={`mark-paid-${settlement.id}`}
+                            className="btn-primary"
+                            style={{ height: '30px', fontSize: '12px', padding: '0 14px' }}
+                            onClick={() => handleMarkPaid(settlement.id)}
+                            disabled={!!actionLoading[settlement.id]}
+                            title="Let the receiver know you have transferred the money"
+                          >
+                            {actionLoading[settlement.id] === 'paying' ? 'Sending…' : "I've Paid"}
+                          </button>
+                        </div>
+                      ) : isMyCredit ? (
+                        /* Receiver can also directly record payment received */
+                        <button
+                          id={`confirm-received-${settlement.id}`}
+                          className="btn-secondary"
+                          style={{ height: '30px', fontSize: '12px' }}
+                          onClick={() => handleConfirmPayment(settlement.id)}
+                          disabled={!!actionLoading[settlement.id]}
+                          title="Confirm you received this payment"
+                        >
+                          Confirm Received
+                        </button>
+                      ) : (
+                        <span className="impact-badge settled">
+                          Pending
+                        </span>
+                      )}
+                    </div>
                   </div>
 
-                  <div className="row-actions">
-                    <strong style={{ fontVariantNumeric: 'tabular-nums', fontSize: '14px' }}>
-                      ₹{Number(settlement.amount).toFixed(2)}
-                    </strong>
+                  {/* ── Status Explanation Subtext ── */}
+                  {isPendingConfirmation && (
+                    <div style={{ fontSize: '12px', color: 'var(--text-secondary)', background: 'var(--bg-subtle)', padding: '6px 10px', borderRadius: 'var(--radius-sm)' }}>
+                      💳 <strong>Payment Submitted</strong>: {isMyDebt ? 'You marked this as paid.' : `${settlement.fromName} reported this payment as sent.`} Awaiting verification.
+                    </div>
+                  )}
 
-                    {isCompleted ? (
-                      <span className="impact-badge receive">Paid</span>
-                    ) : isMyDebt ? (
-                      <button
-                        id={`mark-settled-${settlement.id}`}
-                        className="btn-primary"
-                        style={{ height: '30px', fontSize: '12px' }}
-                        onClick={() => handleMarkSettled(settlement.id)}
-                        title="Mark this debt as paid (either person can confirm)"
-                      >
-                        Mark as Paid
-                      </button>
-                    ) : isMyCredit ? (
-                      <button
-                        id={`confirm-received-${settlement.id}`}
-                        className="btn-primary"
-                        style={{ height: '30px', fontSize: '12px', backgroundColor: 'var(--success)', borderColor: 'var(--success)' }}
-                        onClick={() => handleMarkSettled(settlement.id)}
-                        title="Confirm you received this payment (either person can confirm)"
-                      >
-                        Confirm Received
-                      </button>
-                    ) : (
-                      <span className="impact-badge settled">
-                        Pending
-                      </span>
-                    )}
-                  </div>
+                  {isRejected && (
+                    <div style={{ fontSize: '12px', color: 'var(--danger-text)', background: 'var(--danger-bg)', border: '1px solid var(--danger-border)', padding: '6px 10px', borderRadius: 'var(--radius-sm)' }}>
+                      ✕ <strong>Payment Rejected</strong>: {settlement.rejectionReason || 'Receiver indicated the payment was not received.'} Please verify payment details and re-send.
+                    </div>
+                  )}
                 </li>
               );
             })}
@@ -197,7 +292,7 @@ export default function BalancesPage() {
       <section className="card">
         <div className="card-header">
           <div>
-            <h2 className="card-title">Confirmed Settlement History ({history.length})</h2>
+            <h2 className="card-title">Confirmed Settlement History ({history.filter((h) => h.status === 'completed').length})</h2>
             <div className="card-subtitle">Verified payment audit log</div>
           </div>
         </div>
@@ -208,50 +303,52 @@ export default function BalancesPage() {
           </p>
         ) : (
           <ul className="list">
-            {history.map((item) => {
-              const isPayer = currentUser?.id === item.fromId;
-              const isReceiver = currentUser?.id === item.toId;
-              const isConfirmerMe = currentUser?.id === item.confirmedById;
-              const confirmerName = isConfirmerMe ? 'You' : item.confirmedByName;
-              const displayDate = item.confirmedAt || item.createdAt;
-              const formattedDate = displayDate
-                ? new Date(displayDate).toLocaleDateString(undefined, {
-                    month: 'short',
-                    day: 'numeric',
-                    hour: '2-digit',
-                    minute: '2-digit',
-                  })
-                : '';
+            {history
+              .filter((item) => item.status === 'completed')
+              .map((item) => {
+                const isPayer = currentUser?.id === item.fromId;
+                const isReceiver = currentUser?.id === item.toId;
+                const isConfirmerMe = currentUser?.id === item.confirmedById;
+                const confirmerName = isConfirmerMe ? 'You' : item.confirmedByName;
+                const displayDate = item.confirmedAt || item.createdAt;
+                const formattedDate = displayDate
+                  ? new Date(displayDate).toLocaleDateString(undefined, {
+                      month: 'short',
+                      day: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })
+                  : '';
 
-              return (
-                <li key={item.id}>
-                  <div>
-                    <div style={{ fontSize: '13.5px' }}>
-                      <strong>{isPayer ? 'You' : item.fromName}</strong>
-                      <span style={{ color: 'var(--text-secondary)' }}> paid </span>
-                      <strong>{isReceiver ? 'You' : item.toName}</strong>
+                return (
+                  <li key={item.id}>
+                    <div>
+                      <div style={{ fontSize: '13.5px' }}>
+                        <strong>{isPayer ? 'You' : item.fromName}</strong>
+                        <span style={{ color: 'var(--text-secondary)' }}> paid </span>
+                        <strong>{isReceiver ? 'You' : item.toName}</strong>
+                      </div>
+                      <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: 2 }}>
+                        {confirmerName && (
+                          <span>
+                            Confirmed by <strong>{confirmerName}</strong>
+                          </span>
+                        )}
+                        {formattedDate && <span style={{ marginLeft: 6 }}>&bull; {formattedDate}</span>}
+                      </div>
                     </div>
-                    <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: 2 }}>
-                      {confirmerName && (
-                        <span>
-                          Confirmed by <strong>{confirmerName}</strong>
-                        </span>
-                      )}
-                      {formattedDate && <span style={{ marginLeft: 6 }}>&bull; {formattedDate}</span>}
-                    </div>
-                  </div>
 
-                  <div className="row-actions">
-                    <strong style={{ fontVariantNumeric: 'tabular-nums', fontSize: '14px' }}>
-                      ₹{Number(item.amount).toFixed(2)}
-                    </strong>
-                    <span className="impact-badge receive">
-                      Confirmed
-                    </span>
-                  </div>
-                </li>
-              );
-            })}
+                    <div className="row-actions">
+                      <strong style={{ fontVariantNumeric: 'tabular-nums', fontSize: '14px' }}>
+                        ₹{Number(item.amount).toFixed(2)}
+                      </strong>
+                      <span className="impact-badge receive">
+                        Confirmed ✓
+                      </span>
+                    </div>
+                  </li>
+                );
+              })}
           </ul>
         )}
       </section>

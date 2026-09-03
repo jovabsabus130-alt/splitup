@@ -10,8 +10,10 @@ const expenseRoutes = require('./routes/expenses');
 const balanceRoutes = require('./routes/balances');
 const aiExpenseRoutes = require('./routes/aiExpense');
 const shoppingRoutes = require('./routes/shopping');
+const notificationRoutes = require('./routes/notifications');
 const { settlementsRouter } = require('./routes/settlements');
 const dashboardRoutes = require('./routes/dashboard');
+const { errorHandler } = require('./middleware/errorHandler');
 require('./services/cronService'); // Initialize background cron tasks & keep-alive ping
 
 const app = express();
@@ -20,6 +22,7 @@ const PORT = process.env.PORT || 5000;
 app.use(cors());
 app.use(express.json());
 app.use('/api/auth', authRoutes);
+app.use('/api/notifications', notificationRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/groups', groupRoutes);
 app.use('/api', expenseRoutes);
@@ -31,6 +34,9 @@ app.use('/api/groups/:groupId/shopping', shoppingRoutes);
 app.get('/health', (req, res) => {
   res.json({ status: 'ok' });
 });
+
+// Centralized Express Error-Handling Middleware (Must be registered after all route handlers)
+app.use(errorHandler);
 
 async function start() {
   try {

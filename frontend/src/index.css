@@ -1466,3 +1466,198 @@ select:disabled {
     padding: var(--space-4);
   }
 }
+
+/* ── Category Picker Styles ──────────────────────────────────────────────── */
+.category-picker-container {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.category-chips-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.category-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 12px;
+  font-size: 12.5px;
+  font-weight: 500;
+  border-radius: var(--radius-full);
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+
+.category-chip:hover {
+  background-color: var(--bg-subtle);
+  border-color: var(--border-hover);
+  color: var(--text-primary);
+}
+
+.category-chip.selected {
+  background-color: var(--accent-primary);
+  border-color: var(--accent-primary);
+  color: var(--accent-text);
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.15);
+}
+
+.category-chip-icon {
+  font-size: 13px;
+  line-height: 1;
+}
+
+.custom-category-input-wrapper {
+  margin-top: 4px;
+}
+
+.custom-category-input {
+  width: 100%;
+  height: var(--control-height);
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  background-color: var(--bg-surface);
+  font-size: 13px;
+}
+
+.custom-category-input:focus {
+  outline: none;
+  border-color: var(--accent-primary);
+}
+
+/* ── Floating AI Assistant Trigger Button ────────────────────────────────── */
+.ai-floating-container {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 45;
+}
+
+.ai-floating-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #312e81 100%);
+  color: #ffffff;
+  border-radius: var(--radius-full);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  box-shadow: 0 4px 20px -2px rgba(15, 23, 42, 0.4), 0 0 15px rgba(99, 102, 241, 0.3);
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+  transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.2s ease;
+}
+
+.ai-floating-btn:hover {
+  transform: translateY(-2px) scale(1.03);
+  box-shadow: 0 6px 24px -2px rgba(15, 23, 42, 0.5), 0 0 20px rgba(99, 102, 241, 0.45);
+}
+
+.ai-floating-btn:active {
+  transform: translateY(0) scale(0.98);
+}
+
+.ai-floating-icon {
+  font-size: 15px;
+  filter: drop-shadow(0 0 4px rgba(255, 255, 255, 0.5));
+}
+
+/* ── Comprehensive Mobile Responsiveness Fixes ──────────────────────────── */
+@media (max-width: 768px) {
+  .page-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-3);
+  }
+
+  .header-actions {
+    width: 100%;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+  }
+
+  .header-actions > * {
+    flex: 1 1 auto;
+  }
+
+  .summary-balance-bar {
+    grid-template-columns: 1fr;
+    gap: var(--space-3);
+  }
+
+  .two-column-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .expense-inputs-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  .expense-inputs-grid label {
+    grid-column: span 1 !important;
+  }
+
+  .modal-box {
+    max-width: 95vw !important;
+    width: 95vw !important;
+    padding: var(--space-4) !important;
+    margin: var(--space-2);
+  }
+
+  .ai-floating-container {
+    right: 16px;
+    bottom: 16px;
+  }
+
+  .ai-floating-label {
+    display: inline;
+  }
+
+  .ledger-table th,
+  .ledger-table td {
+    padding: 10px 8px;
+    font-size: 12.5px;
+  }
+
+  .category-chip {
+    padding: 5px 10px;
+    font-size: 12px;
+  }
+
+  .split-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .split-right-section {
+    width: 100%;
+    justify-content: space-between;
+  }
+}
+
+@media (max-width: 480px) {
+  .category-chips-grid {
+    gap: 4px;
+  }
+
+  .category-chip {
+    padding: 4px 8px;
+    font-size: 11.5px;
+  }
+
+  .ai-floating-btn {
+    padding: 8px 12px;
+    font-size: 12px;
+  }
+}

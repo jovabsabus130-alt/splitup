@@ -45,7 +45,7 @@ router.get('/groups/:groupId/balances', async (req, res) => {
             fromId: item.from,
             toId: item.to,
             amount: amountFixed,
-            status: 'pending',
+            status: { in: ['pending', 'pending_confirmation', 'rejected'] },
           },
           orderBy: { createdAt: 'desc' },
         });
@@ -59,6 +59,8 @@ router.get('/groups/:groupId/balances', async (req, res) => {
             toName: toUser?.name || item.to,
             amount: amountFixed,
             status: existing.status,
+            rejectionReason: existing.rejectionReason,
+            paidAt: existing.paidAt,
           };
         }
 
@@ -80,6 +82,8 @@ router.get('/groups/:groupId/balances', async (req, res) => {
           toName: toUser?.name || item.to,
           amount: amountFixed,
           status: created.status,
+          rejectionReason: null,
+          paidAt: null,
         };
       })
     );
@@ -87,7 +91,7 @@ router.get('/groups/:groupId/balances', async (req, res) => {
     const completedSettlements = await prisma.settlement.findMany({
       where: {
         groupId,
-        status: 'completed',
+        status: { in: ['completed', 'rejected'] },
       },
       orderBy: { createdAt: 'desc' },
       include: {
@@ -108,13 +112,15 @@ router.get('/groups/:groupId/balances', async (req, res) => {
         toName: s.to?.name || 'Unknown',
         amount: Number(s.amount.toString()),
         status: s.status,
+        rejectionReason: s.rejectionReason,
         confirmedById: s.confirmedById,
         confirmedByName: s.confirmedBy?.name || null,
-        confirmedAt: s.confirmedAt || s.createdAt,
+        confirmedAt: s.confirmedAt || s.paidAt || s.createdAt,
         createdAt: s.createdAt,
       })),
     });
   } catch (error) {
+    console.error('Fetch balances error:', error);
     return res.status(500).json({ message: 'Failed to fetch balances' });
   }
 });

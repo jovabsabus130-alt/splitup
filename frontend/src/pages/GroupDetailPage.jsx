@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
+import CategoryPicker from '../components/CategoryPicker';
+import EditExpenseModal from '../components/EditExpenseModal';
+import ExpenseHistoryModal from '../components/ExpenseHistoryModal';
 import ShareModal from '../components/ShareModal';
 import ShoppingListSection from '../components/ShoppingListSection';
 import api from '../lib/api';
@@ -14,7 +17,7 @@ export default function GroupDetailPage() {
   const [isCustomSplit, setIsCustomSplit] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
-  const [form, setForm] = useState({ amount: '', category: '', description: '' });
+  const [form, setForm] = useState({ amount: '', category: 'Food', description: '' });
   const [paidById, setPaidById] = useState('');
   const [memberShares, setMemberShares] = useState({});
   const [excludedMembers, setExcludedMembers] = useState({});
@@ -26,6 +29,8 @@ export default function GroupDetailPage() {
   const [confirmLeave, setConfirmLeave] = useState(false);
   const [leavingGroup, setLeavingGroup] = useState(false);
   const [lastAddedExpense, setLastAddedExpense] = useState(null);
+  const [editingExpense, setEditingExpense] = useState(null);
+  const [historyExpense, setHistoryExpense] = useState(null);
   const navigate = useNavigate();
 
   const members = useMemo(() => group?.members?.map((m) => m.user) || [], [group]);
@@ -532,24 +537,25 @@ export default function GroupDetailPage() {
                   </select>
                 </label>
 
-                <label>
-                  Category
-                  <input
-                    placeholder="e.g. Food, Travel, Utilities"
-                    value={form.category}
-                    onChange={(event) => setForm((prev) => ({ ...prev, category: event.target.value }))}
-                    required
-                  />
-                </label>
-
-                <label>
+                <label style={{ gridColumn: 'span 2' }}>
                   Description (optional)
                   <input
-                    placeholder="e.g. Dinner, Groceries"
+                    placeholder="e.g. Dinner, Groceries, Flight tickets"
                     value={form.description}
                     onChange={(event) => setForm((prev) => ({ ...prev, description: event.target.value }))}
                   />
                 </label>
+              </div>
+
+              <div>
+                <label style={{ display: 'block', marginBottom: '6px', fontWeight: 500, fontSize: '13px' }}>
+                  Category
+                </label>
+                <CategoryPicker
+                  value={form.category}
+                  onChange={(cat) => setForm((prev) => ({ ...prev, category: cat }))}
+                  idPrefix="new-exp-cat"
+                />
               </div>
 
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 'var(--space-2)' }}>
@@ -734,18 +740,49 @@ export default function GroupDetailPage() {
                       <th>Paid By</th>
                       <th>Your Share</th>
                       <th>Total Amount</th>
+                      <th style={{ textAlign: 'right' }}>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
                     {expenses.map((expense) => {
                       const isPayer = expense.paidBy?.id === currentUserId || expense.paidById === currentUserId;
                       const mySplit = expense.splits?.find((s) => s.userId === currentUserId || s.user?.id === currentUserId);
+                      const isEdited = expense.isEdited || (expense.editHistory && expense.editHistory.length > 0);
+                      const formattedDate = expense.createdAt
+                        ? new Date(expense.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+                        : '';
+
                       return (
                         <tr key={expense.id}>
                           <td>
-                            <strong style={{ color: 'var(--text-primary)' }}>
-                              {expense.description || expense.category}
-                            </strong>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                              <strong style={{ color: 'var(--text-primary)' }}>
+                                {expense.description || expense.category}
+                              </strong>
+                              {isEdited && (
+                                <button
+                                  type="button"
+                                  className="admin-pill"
+                                  style={{
+                                    fontSize: '10.5px',
+                                    padding: '1px 6px',
+                                    background: 'var(--warning-bg)',
+                                    color: 'var(--warning-text)',
+                                    borderColor: 'var(--warning-border)',
+                                    cursor: 'pointer',
+                                  }}
+                                  onClick={() => setHistoryExpense(expense)}
+                                  title="Click to view edit history"
+                                >
+                                  Edited 📝
+                                </button>
+                              )}
+                            </div>
+                            {formattedDate && (
+                              <div style={{ fontSize: '11.5px', color: 'var(--text-muted)', marginTop: '2px' }}>
+                                {formattedDate}
+                              </div>
+                            )}
                           </td>
                           <td>
                             <span className="category-tag">{expense.category}</span>
@@ -764,10 +801,34 @@ export default function GroupDetailPage() {
                               <span style={{ color: 'var(--text-muted)' }}>Excluded</span>
                             )}
                           </td>
-                          <td style={{ textAlign: 'right' }}>
+                          <td>
                             <span className="amount-tabular">
                               ₹{Number(expense.amount).toFixed(2)}
                             </span>
+                          </td>
+                          <td style={{ textAlign: 'right' }}>
+                            <div style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end', alignItems: 'center' }}>
+                              <button
+                                type="button"
+                                className="btn-secondary"
+                                style={{ height: '26px', fontSize: '11.5px', padding: '0 8px' }}
+                                onClick={() => setEditingExpense(expense)}
+                                title="Edit this transaction"
+                              >
+                                Edit
+                              </button>
+                              {isEdited && (
+                                <button
+                                  type="button"
+                                  className="btn-ghost"
+                                  style={{ height: '26px', fontSize: '11.5px', padding: '0 6px' }}
+                                  onClick={() => setHistoryExpense(expense)}
+                                  title="View change history"
+                                >
+                                  History
+                                </button>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       );
@@ -970,6 +1031,30 @@ export default function GroupDetailPage() {
               </div>
             </div>
           </div>
+        )}
+
+        {/* ── Edit Expense Modal ── */}
+        {editingExpense && (
+          <EditExpenseModal
+            groupId={groupId}
+            expense={editingExpense}
+            members={members}
+            currentUserId={currentUserId}
+            onClose={() => setEditingExpense(null)}
+            onUpdated={(updatedExp, msg) => {
+              setMessage(msg || 'Transaction updated successfully!');
+              loadGroupData();
+            }}
+          />
+        )}
+
+        {/* ── Expense History Audit Modal ── */}
+        {historyExpense && (
+          <ExpenseHistoryModal
+            groupId={groupId}
+            expense={historyExpense}
+            onClose={() => setHistoryExpense(null)}
+          />
         )}
     </>
   );

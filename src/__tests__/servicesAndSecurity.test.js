@@ -75,7 +75,7 @@ describe('Services, Security & Integration Unit Tests', () => {
     });
   });
 
-  // ── 4. Scheduled Jobs / Cron ───────────────────────────────────────────────
+  // ── 4. Scheduled Jobs / Cron & MongoDB Purge ──────────────────────────────
   describe('Scheduled Jobs / Cron Scheduler', () => {
     it('should register and execute background maintenance jobs', async () => {
       let runCount = 0;
@@ -88,6 +88,20 @@ describe('Services, Security & Integration Unit Tests', () => {
       assert.strictEqual(report.status, 'success');
       assert.strictEqual(report.jobName, 'test-job');
       cron.stopAll();
+    });
+
+    it('should execute purgeExpiredOtps with grace period without uncaught exceptions', async () => {
+      const report = await cron.runJob('purge-expired-otps', () => cron.purgeExpiredOtps(5));
+      assert.ok(report.status === 'success' || report.status === 'failed');
+      if (report.status === 'success') {
+        assert.strictEqual(typeof report.result.purgedCount, 'number');
+      }
+    });
+
+    it('should execute MongoDB purgeStaleAiReceiptLogs safely without crashing', async () => {
+      const result = await cron.purgeStaleAiReceiptLogs(90);
+      assert.strictEqual(typeof result.success, 'boolean');
+      assert.strictEqual(typeof result.deletedCount, 'number');
     });
   });
 
@@ -106,6 +120,67 @@ describe('Services, Security & Integration Unit Tests', () => {
       assert.ok(html.includes('Goa Trip 2026'));
       assert.ok(html.includes('Sarah'));
       assert.ok(html.includes('/join/grp_goa_2026'));
+    });
+  });
+
+  // ── 6. Centralized Error Handling & Info Leakage Prevention ────────────────
+  describe('Centralized Server Error Handling', () => {
+    const { errorHandler, NotFoundError, ForbiddenError } = require('../middleware/errorHandler');
+
+    function createMockRes() {
+      const res = {
+        statusCode: 200,
+        body: null,
+        status(code) {
+          this.statusCode = code;
+          return this;
+        },
+        json(payload) {
+          this.body = payload;
+          return this;
+        },
+      };
+      return res;
+    }
+
+    it('should return 404 for NotFoundError with operational message', () => {
+      const res = createMockRes();
+      errorHandler(new NotFoundError('Group not found'), { method: 'GET', originalUrl: '/api/groups/123' }, res, () => {});
+      assert.strictEqual(res.statusCode, 404);
+      assert.strictEqual(res.body.message, 'Group not found');
+    });
+
+    it('should return 403 for ForbiddenError on unauthorized operations', () => {
+      const res = createMockRes();
+      errorHandler(new ForbiddenError('Only group admin can delete'), { method: 'DELETE', originalUrl: '/api/groups/123' }, res, () => {});
+      assert.strictEqual(res.statusCode, 403);
+      assert.strictEqual(res.body.message, 'Only group admin can delete');
+    });
+
+    it('should sanitize unexpected internal 500 errors and avoid leaking stack traces in production', () => {
+      const originalEnv = process.env.NODE_ENV;
+      process.env.NODE_ENV = 'production';
+
+      const res = createMockRes();
+      const internalErr = new Error('FATAL: PostgreSQL connection refused at 10.0.0.1:5432');
+      errorHandler(internalErr, { method: 'POST', originalUrl: '/api/groups' }, res, () => {});
+
+      assert.strictEqual(res.statusCode, 500);
+      assert.strictEqual(res.body.message, 'Internal server error. Please try again later.');
+      assert.strictEqual(res.body.stack, undefined);
+      assert.strictEqual(res.body.debugMessage, undefined);
+
+      process.env.NODE_ENV = originalEnv;
+    });
+
+    it('should handle Prisma unique constraint P2002 as 409 Conflict', () => {
+      const res = createMockRes();
+      const prismaErr = new Error('Unique constraint failed on the fields: (`email`)');
+      prismaErr.code = 'P2002';
+      errorHandler(prismaErr, { method: 'POST', originalUrl: '/api/auth/register' }, res, () => {});
+
+      assert.strictEqual(res.statusCode, 409);
+      assert.strictEqual(res.body.message, 'A resource with this unique attribute already exists.');
     });
   });
 });

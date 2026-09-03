@@ -4,8 +4,16 @@ const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL || 'http://localhost:5000',
 });
 
-api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('splitup_token') || localStorage.getItem('token');
+api.interceptors.request.use(async (config) => {
+  let token = localStorage.getItem('splitup_token') || localStorage.getItem('token');
+
+  // If using Clerk, dynamically grab the active session token if available
+  if (window.Clerk && window.Clerk.session) {
+    try {
+      const clerkToken = await window.Clerk.session.getToken();
+      if (clerkToken) token = clerkToken;
+    } catch {}
+  }
 
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;

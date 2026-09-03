@@ -2,6 +2,7 @@ const express = require('express');
 const auth = require('../middleware/auth');
 const prisma = require('../lib/prisma');
 const { getGroupBalances } = require('../services/balanceService');
+const { analyzeMonthlyExpenses } = require('../services/aiParser');
 
 const router = express.Router();
 router.use(auth);
@@ -86,13 +87,17 @@ router.get('/', async (req, res) => {
       const recentExpensesRaw = await prisma.expense.findMany({
         where: { groupId: { in: groupIds } },
         orderBy: { createdAt: 'desc' },
-        take: 6,
+        take: 8,
         include: {
           group: { select: { id: true, name: true } },
           paidBy: { select: { id: true, name: true, email: true } },
           splits: {
             where: { userId: req.userId },
             select: { share: true },
+          },
+          editHistory: {
+            take: 1,
+            select: { id: true },
           },
         },
       });
@@ -108,6 +113,8 @@ router.get('/', async (req, res) => {
           category: e.category,
           description: e.description,
           createdAt: e.createdAt,
+          updatedAt: e.updatedAt,
+          isEdited: e.isEdited,
           paidById: e.paidById,
           paidByName: isPayer ? 'You' : (e.paidBy ? e.paidBy.name : 'Unknown'),
           isPayer,
@@ -122,11 +129,11 @@ router.get('/', async (req, res) => {
       const pendingSettlementsRaw = await prisma.settlement.findMany({
         where: {
           groupId: { in: groupIds },
-          status: 'pending',
+          status: { in: ['pending', 'pending_confirmation', 'rejected'] },
           OR: [{ fromId: req.userId }, { toId: req.userId }],
         },
         orderBy: { createdAt: 'desc' },
-        take: 5,
+        take: 8,
         include: {
           group: { select: { id: true, name: true } },
           from: { select: { id: true, name: true, email: true, upiId: true } },
@@ -140,6 +147,8 @@ router.get('/', async (req, res) => {
         groupName: s.group ? s.group.name : '',
         amount: Number(s.amount.toString()),
         status: s.status,
+        rejectionReason: s.rejectionReason,
+        paidAt: s.paidAt,
         fromId: s.fromId,
         fromName: s.fromId === req.userId ? 'You' : (s.from ? s.from.name : 'Unknown'),
         toId: s.toId,
@@ -170,11 +179,10 @@ router.get('/', async (req, res) => {
       categoryBreakdown = Object.entries(categoryAggregates)
         .map(([category, amount]) => ({
           category,
-          amount,
+          amount: Number(amount.toFixed(2)),
           percentage: totalGroupSpending > 0 ? Math.round((amount / totalGroupSpending) * 100) : 0,
         }))
-        .sort((a, b) => b.amount - a.amount)
-        .slice(0, 5);
+        .sort((a, b) => b.amount - a.amount);
     }
 
     return res.status(200).json({
@@ -189,11 +197,123 @@ router.get('/', async (req, res) => {
       groupBalances: groupBalancesSummary,
       recentExpenses,
       pendingSettlements,
-      categoryBreakdown,
+      categoryBreakdown: categoryBreakdown.slice(0, 6),
     });
   } catch (error) {
     console.error('Dashboard fetch error:', error);
     return res.status(500).json({ message: 'Failed to load dashboard data' });
+  }
+});
+
+// ── GET /api/dashboard/ai-analysis ───────────────────────────────────────────
+// AI Monthly Expense Analysis endpoint
+router.get('/ai-analysis', async (req, res) => {
+  try {
+    const { month, groupId } = req.query;
+
+    // Get all groups of user
+    const memberships = await prisma.groupMember.findMany({
+      where: { userId: req.userId },
+      select: { groupId: true },
+    });
+
+    let targetGroupIds = memberships.map((m) => m.groupId);
+    if (groupId && targetGroupIds.includes(groupId)) {
+      targetGroupIds = [groupId];
+    }
+
+    if (targetGroupIds.length === 0) {
+      return res.status(200).json({
+        monthName: 'Current Month',
+        totalSpent: 0,
+        transactionCount: 0,
+        categoryBreakdown: [],
+        topCategory: null,
+        aiInsights: {
+          summary: 'No groups or expenses found to analyze.',
+          keyObservations: ['Join or create a group to start tracking expenses and viewing AI spending insights.'],
+          savingTips: ['Create a shared pool for rent, utilities or group outings.'],
+        },
+        availableMonths: [],
+      });
+    }
+
+    // Fetch all user expenses to compute available months
+    const allExpenses = await prisma.expense.findMany({
+      where: { groupId: { in: targetGroupIds } },
+      select: { id: true, amount: true, category: true, description: true, createdAt: true },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    // Determine available months
+    const monthSet = new Set();
+    allExpenses.forEach((e) => {
+      const d = new Date(e.createdAt);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      monthSet.add(key);
+    });
+
+    const now = new Date();
+    const currentMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    monthSet.add(currentMonthKey);
+    const availableMonths = Array.from(monthSet).sort().reverse();
+
+    // Determine active month to analyze
+    const activeMonthKey = month && availableMonths.includes(month) ? month : availableMonths[0];
+    const [targetYear, targetMonth] = activeMonthKey.split('-').map(Number);
+
+    const startDate = new Date(targetYear, targetMonth - 1, 1);
+    const endDate = new Date(targetYear, targetMonth, 1);
+
+    const monthExpenses = allExpenses.filter((e) => {
+      const d = new Date(e.createdAt);
+      return d >= startDate && d < endDate;
+    });
+
+    const monthDateObj = new Date(targetYear, targetMonth - 1, 15);
+    const monthName = monthDateObj.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+
+    let totalSpent = 0;
+    const categoryTotals = {};
+
+    monthExpenses.forEach((e) => {
+      const amt = Number(e.amount);
+      totalSpent += amt;
+      categoryTotals[e.category] = (categoryTotals[e.category] || 0) + amt;
+    });
+
+    const categoryBreakdown = Object.entries(categoryTotals)
+      .map(([category, amount]) => ({
+        category,
+        amount: Number(amount.toFixed(2)),
+        percentage: totalSpent > 0 ? Math.round((amount / totalSpent) * 100) : 0,
+      }))
+      .sort((a, b) => b.amount - a.amount);
+
+    const topCategory = categoryBreakdown.length > 0 ? categoryBreakdown[0] : null;
+
+    // Call AI analysis
+    const aiInsights = await analyzeMonthlyExpenses({
+      monthName,
+      totalSpent: Number(totalSpent.toFixed(2)),
+      transactionCount: monthExpenses.length,
+      categoryBreakdown,
+      topCategory,
+    });
+
+    return res.status(200).json({
+      selectedMonth: activeMonthKey,
+      monthName,
+      totalSpent: Number(totalSpent.toFixed(2)),
+      transactionCount: monthExpenses.length,
+      categoryBreakdown,
+      topCategory,
+      aiInsights,
+      availableMonths,
+    });
+  } catch (error) {
+    console.error('AI Monthly analysis error:', error);
+    return res.status(500).json({ message: 'Failed to generate monthly expense analysis' });
   }
 });
 

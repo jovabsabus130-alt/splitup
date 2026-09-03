@@ -65,4 +65,66 @@ router.post('/groups/:groupId/expenses/parse', async (req, res) => {
   }
 });
 
+/**
+ * MongoDB READ: Get recent raw AI parse audit logs for a group
+ * Demonstrates: find(), projection (.select), sort, limit, and .lean() for read performance
+ */
+router.get('/groups/:groupId/ai-logs', async (req, res) => {
+  const { groupId } = req.params;
+
+  try {
+    await connectMongo();
+    if (!process.env.MONGODB_URI) {
+      return res.status(200).json({ logs: [] });
+    }
+
+    const logs = await RawExpenseLog.getRecentLogs(groupId, 20);
+    return res.status(200).json({ logs });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to fetch AI logs' });
+  }
+});
+
+/**
+ * MongoDB UPDATE: Update extracted category on an AI parse log
+ * Demonstrates: findOneAndUpdate with atomic $set operator and schema validation
+ */
+router.patch('/groups/:groupId/ai-logs/:logId', async (req, res) => {
+  const { groupId, logId } = req.params;
+  const { category } = req.body;
+
+  if (!category || typeof category !== 'string') {
+    return res.status(400).json({ message: 'Category is required' });
+  }
+
+  try {
+    await connectMongo();
+    const updated = await RawExpenseLog.updateLogCategory(logId, groupId, category.trim());
+    if (!updated) {
+      return res.status(404).json({ message: 'Log entry not found' });
+    }
+    return res.status(200).json({ log: updated });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to update AI log' });
+  }
+});
+
+/**
+ * MongoDB DELETE: Purge AI parse logs older than retention period
+ * Demonstrates: deleteMany with indexed query filter
+ */
+router.delete('/groups/:groupId/ai-logs', async (req, res) => {
+  const { groupId } = req.params;
+  const days = parseInt(req.query.days || '90', 10);
+
+  try {
+    await connectMongo();
+    const cutoffDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+    const result = await RawExpenseLog.purgeOlderThan(groupId, cutoffDate);
+    return res.status(200).json({ deletedCount: result.deletedCount });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to purge AI logs' });
+  }
+});
+
 module.exports = router;

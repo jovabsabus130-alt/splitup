@@ -8,24 +8,26 @@ datasource db {
 }
 
 model User {
-  id               String        @id @default(cuid())
-  name             String
-  email            String        @unique
-  passwordHash     String
-  phone            String?
-  upiId            String?
-  emailVerified    Boolean       @default(false)
-  createdAt        DateTime      @default(now())
-  groupMemberships GroupMember[]
-  adminOfGroups    Group[]       @relation("GroupAdmin")
-  joinRequests     JoinRequest[]
-  paidExpenses     Expense[]     @relation("ExpensePaidBy")
-  expenseSplits    ExpenseSplit[]
-  settlementsFrom  Settlement[]  @relation("SettlementFrom")
-  settlementsTo    Settlement[]  @relation("SettlementTo")
-  confirmedSettlements Settlement[]  @relation("SettlementConfirmedBy")
-  otpCodes         OtpCode[]
-  shoppingItems    ShoppingItem[]
+  id                   String               @id @default(cuid())
+  name                 String
+  email                String               @unique
+  passwordHash         String
+  phone                String?
+  upiId                String?
+  emailVerified        Boolean              @default(false)
+  createdAt            DateTime             @default(now())
+  groupMemberships     GroupMember[]
+  adminOfGroups        Group[]              @relation("GroupAdmin")
+  joinRequests         JoinRequest[]
+  paidExpenses         Expense[]            @relation("ExpensePaidBy")
+  expenseSplits        ExpenseSplit[]
+  settlementsFrom      Settlement[]         @relation("SettlementFrom")
+  settlementsTo        Settlement[]         @relation("SettlementTo")
+  confirmedSettlements Settlement[]         @relation("SettlementConfirmedBy")
+  otpCodes             OtpCode[]
+  shoppingItems        ShoppingItem[]
+  notifications        Notification[]
+  expenseEdits         ExpenseEditHistory[]
 }
 
 model Group {
@@ -38,6 +40,7 @@ model Group {
   settlements   Settlement[]
   joinRequests  JoinRequest[]
   shoppingItems ShoppingItem[]
+  notifications Notification[]
 
   admin User @relation("GroupAdmin", fields: [adminId], references: [id], onDelete: Restrict)
 }
@@ -66,46 +69,79 @@ model JoinRequest {
 }
 
 model Expense {
-  id          String        @id @default(cuid())
+  id          String               @id @default(cuid())
   groupId     String
   paidById    String
-  amount      Decimal       @db.Decimal(12, 2)
+  amount      Decimal              @db.Decimal(12, 2)
   category    String
   description String?
-  createdAt   DateTime      @default(now())
+  isEdited    Boolean              @default(false)
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @default(now()) @updatedAt
+  editHistory ExpenseEditHistory[]
 
-  group    Group   @relation(fields: [groupId], references: [id], onDelete: Cascade)
-  paidBy   User    @relation("ExpensePaidBy", fields: [paidById], references: [id], onDelete: Restrict)
-  splits   ExpenseSplit[]
+  group  Group          @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  paidBy User           @relation("ExpensePaidBy", fields: [paidById], references: [id], onDelete: Restrict)
+  splits ExpenseSplit[]
 }
 
 model ExpenseSplit {
-  id         String   @id @default(cuid())
-  expenseId   String
-  userId      String
-  share       Decimal  @db.Decimal(12, 2)
+  id        String  @id @default(cuid())
+  expenseId String
+  userId    String
+  share     Decimal @db.Decimal(12, 2)
 
-  expense    Expense @relation(fields: [expenseId], references: [id], onDelete: Cascade)
-  user       User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expense Expense @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([expenseId, userId])
 }
 
+model ExpenseEditHistory {
+  id           String   @id @default(cuid())
+  expenseId    String
+  editedById   String
+  previousData Json
+  changes      Json
+  createdAt    DateTime @default(now())
+
+  expense  Expense @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+  editedBy User    @relation(fields: [editedById], references: [id], onDelete: Cascade)
+}
+
 model Settlement {
-  id            String    @id @default(cuid())
-  groupId       String
-  fromId        String
-  toId          String
-  amount        Decimal   @db.Decimal(12, 2)
-  status        String    @default("pending")
-  confirmedById String?
-  confirmedAt   DateTime?
-  createdAt     DateTime  @default(now())
+  id              String    @id @default(cuid())
+  groupId         String
+  fromId          String
+  toId            String
+  amount          Decimal   @db.Decimal(12, 2)
+  status          String    @default("pending") // pending | pending_confirmation | completed | rejected
+  rejectionReason String?
+  paidAt          DateTime?
+  confirmedById   String?
+  confirmedAt     DateTime?
+  createdAt       DateTime  @default(now())
 
   group       Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
   from        User  @relation("SettlementFrom", fields: [fromId], references: [id], onDelete: Cascade)
   to          User  @relation("SettlementTo", fields: [toId], references: [id], onDelete: Cascade)
   confirmedBy User? @relation("SettlementConfirmedBy", fields: [confirmedById], references: [id], onDelete: SetNull)
+}
+
+model Notification {
+  id          String   @id @default(cuid())
+  userId      String
+  groupId     String?
+  type        String // payment_confirmation_request | payment_confirmed | payment_rejected | join_request | expense_edited
+  title       String
+  message     String
+  data        Json?
+  isRead      Boolean  @default(false)
+  actionTaken String? // confirmed | rejected | null
+  createdAt   DateTime @default(now())
+
+  user  User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  group Group? @relation(fields: [groupId], references: [id], onDelete: Cascade)
 }
 
 model OtpCode {
@@ -120,14 +156,14 @@ model OtpCode {
 }
 
 model ShoppingItem {
-  id          String   @id @default(cuid())
-  groupId     String
-  addedById   String
-  name        String
-  price       Decimal? @db.Decimal(12, 2)
-  completed   Boolean  @default(false)
-  createdAt   DateTime @default(now())
+  id        String   @id @default(cuid())
+  groupId   String
+  addedById String
+  name      String
+  price     Decimal? @db.Decimal(12, 2)
+  completed Boolean  @default(false)
+  createdAt DateTime @default(now())
 
-  group     Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
-  addedBy   User  @relation(fields: [addedById], references: [id], onDelete: Cascade)
+  group   Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  addedBy User  @relation(fields: [addedById], references: [id], onDelete: Cascade)
 }

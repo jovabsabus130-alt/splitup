@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import AIExpenseAnalysisModal from '../components/AIExpenseAnalysisModal';
+import NotificationsModal from '../components/NotificationsModal';
 import api from '../lib/api';
 
 export default function DashboardPage() {
@@ -9,23 +11,30 @@ export default function DashboardPage() {
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const [showOverviewModal, setShowOverviewModal] = useState(false);
+  const [showNotificationsModal, setShowNotificationsModal] = useState(false);
+  const [showAIAnalysisModal, setShowAIAnalysisModal] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newGroupName, setNewGroupName] = useState('');
   const [creating, setCreating] = useState(false);
+  const [unreadNotifications, setUnreadNotifications] = useState(0);
 
-  async function loadGroups() {
+  async function loadDashboardData() {
     try {
-      const { data } = await api.get('/api/groups');
-      setGroups(data.groups || []);
+      const [groupsRes, notifsRes] = await Promise.all([
+        api.get('/api/groups'),
+        api.get('/api/notifications').catch(() => ({ data: { unreadCount: 0 } })),
+      ]);
+      setGroups(groupsRes.data.groups || []);
+      setUnreadNotifications(notifsRes.data.unreadCount || 0);
     } catch (apiError) {
-      setError(apiError.response?.data?.message || 'Failed to load groups');
+      setError(apiError.response?.data?.message || 'Failed to load dashboard data');
     } finally {
       setLoading(false);
     }
   }
 
   useEffect(() => {
-    loadGroups();
+    loadDashboardData();
   }, []);
 
   async function handleCreateGroup(e) {
@@ -39,7 +48,7 @@ export default function DashboardPage() {
       setNewGroupName('');
       setShowCreateModal(false);
       setMessage('Group created successfully!');
-      await loadGroups();
+      await loadDashboardData();
       if (data.group?.id) {
         navigate(`/groups/${data.group.id}`);
       }
@@ -56,7 +65,7 @@ export default function DashboardPage() {
     try {
       await api.patch(`/api/groups/${groupId}/join-requests/${requestId}`, { status });
       setMessage(status === 'approved' ? 'Member approved and added to group!' : 'Request denied.');
-      await loadGroups();
+      await loadDashboardData();
     } catch (apiError) {
       setError(apiError.response?.data?.message || 'Failed to update request');
     }
@@ -71,6 +80,8 @@ export default function DashboardPage() {
     );
   }, [groups]);
 
+  const totalBadgesCount = allPendingRequests.length + unreadNotifications;
+
   return (
     <>
       {/* ── Page Header ── */}
@@ -84,6 +95,16 @@ export default function DashboardPage() {
         <div className="header-actions">
           <button
             type="button"
+            className="btn-secondary"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', borderColor: 'rgba(99, 102, 241, 0.4)' }}
+            onClick={() => setShowAIAnalysisModal(true)}
+            title="Open AI Monthly Spending Analysis"
+          >
+            <span style={{ fontSize: '14px' }}>✨</span>
+            <span>AI Spending Analysis</span>
+          </button>
+          <button
+            type="button"
             className="btn-primary"
             onClick={() => setShowCreateModal(true)}
           >
@@ -92,9 +113,9 @@ export default function DashboardPage() {
           <button
             type="button"
             className="dashboard-bell-btn"
-            onClick={() => setShowOverviewModal(true)}
-            title={allPendingRequests.length > 0 ? `${allPendingRequests.length} pending join requests` : 'Notifications (no pending requests)'}
-            aria-label="Pending Invites & Requests"
+            onClick={() => setShowNotificationsModal(true)}
+            title={totalBadgesCount > 0 ? `${totalBadgesCount} pending notifications & requests` : 'Notifications'}
+            aria-label="Notifications & Pending Requests"
           >
             <svg
               className="bell-icon"
@@ -103,7 +124,7 @@ export default function DashboardPage() {
               <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
               <path d="M13.73 21a2 2 0 0 1-3.46 0" />
             </svg>
-            {allPendingRequests.length > 0 && (
+            {totalBadgesCount > 0 && (
               <span className="bell-blue-dot" />
             )}
           </button>
@@ -271,7 +292,21 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* ── Summary & Pending Requests Modal (Bell) ── */}
+      {/* ── Notifications Modal ── */}
+      <NotificationsModal
+        isOpen={showNotificationsModal}
+        onClose={() => setShowNotificationsModal(false)}
+        onActionTaken={loadDashboardData}
+      />
+
+      {/* ── AI Monthly Expense Analysis Modal ── */}
+      {showAIAnalysisModal && (
+        <AIExpenseAnalysisModal
+          onClose={() => setShowAIAnalysisModal(false)}
+        />
+      )}
+
+      {/* ── Pending Join Requests (Bell Modal Fallback) ── */}
       {showOverviewModal && (
         <div
           className="modal-overlay"
@@ -295,7 +330,6 @@ export default function DashboardPage() {
               </div>
             </div>
 
-            {/* ── Mini Summary Balance Bar inside Modal ── */}
             <div className="summary-balance-bar" style={{ padding: 'var(--space-4)', gap: 'var(--space-4)', gridTemplateColumns: '1fr 1fr' }}>
               <div className="summary-balance-item">
                 <span className="summary-balance-label">Total Groups</span>
@@ -311,13 +345,10 @@ export default function DashboardPage() {
               </div>
             </div>
 
-            {/* ── Pending Requests List ── */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <h3 style={{ fontSize: '13.5px', fontWeight: 600, color: 'var(--text-primary)' }}>
-                  Pending Join Requests ({allPendingRequests.length})
-                </h3>
-              </div>
+              <h3 style={{ fontSize: '13.5px', fontWeight: 600, color: 'var(--text-primary)' }}>
+                Pending Join Requests ({allPendingRequests.length})
+              </h3>
 
               {allPendingRequests.length === 0 ? (
                 <div
@@ -367,34 +398,9 @@ export default function DashboardPage() {
                         </div>
 
                         <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
-                            <span style={{ fontWeight: 600, fontSize: '14px', color: 'var(--text-primary)' }}>
-                              {req.user?.name || 'User'}
-                            </span>
-                            <span className="admin-pill" style={{ fontSize: '11px' }}>
-                              Join Request
-                            </span>
-                          </div>
-
-                          <div
-                            style={{
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '6px',
-                              fontSize: '12.5px',
-                              color: 'var(--text-secondary)',
-                              marginTop: '2px',
-                            }}
-                          >
-                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, opacity: 0.8 }}>
-                              <rect width="20" height="16" x="2" y="4" rx="2" />
-                              <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
-                            </svg>
-                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                              {req.user?.email || 'No email provided'}
-                            </span>
-                          </div>
-
+                          <span style={{ fontWeight: 600, fontSize: '14px', color: 'var(--text-primary)' }}>
+                            {req.user?.name || 'User'}
+                          </span>
                           <div style={{ fontSize: '12.5px', color: 'var(--text-primary)', marginTop: '4px' }}>
                             Wants to join: <strong style={{ color: 'var(--accent-primary)' }}>{req.groupName}</strong>
                           </div>
@@ -403,7 +409,6 @@ export default function DashboardPage() {
 
                       <div style={{ display: 'flex', gap: 'var(--space-2)', justifyContent: 'flex-end', paddingTop: '8px', borderTop: '1px solid var(--border-subtle)' }}>
                         <button
-                          id={`modal-deny-btn-${req.id}`}
                           type="button"
                           className="btn-danger"
                           style={{ height: '30px', fontSize: '12px', padding: '0 12px' }}
@@ -412,7 +417,6 @@ export default function DashboardPage() {
                           Reject
                         </button>
                         <button
-                          id={`modal-approve-btn-${req.id}`}
                           type="button"
                           className="btn-primary"
                           style={{ height: '30px', fontSize: '12px', padding: '0 14px' }}

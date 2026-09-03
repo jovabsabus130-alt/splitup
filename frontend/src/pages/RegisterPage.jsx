@@ -1,6 +1,9 @@
 import { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { SignUp } from '@clerk/clerk-react';
 import api from '../lib/api';
+
+const isClerkEnabled = !!import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
 
 export default function RegisterPage() {
   const navigate = useNavigate();
@@ -48,49 +51,61 @@ export default function RegisterPage() {
           <p>Start tracking and settling shared expenses</p>
         </div>
 
-        <form onSubmit={handleSubmit} className="form-grid">
-          <label className="form-label">
-            Full Name
-            <input
-              value={form.name}
-              placeholder="Full name"
-              onChange={(event) => setForm((prev) => ({ ...prev, name: event.target.value }))}
-              required
+        {isClerkEnabled ? (
+          <div style={{ display: 'flex', justifyContent: 'center', margin: 'var(--space-2) 0' }}>
+            <SignUp
+              routing="hash"
+              signInUrl="/login"
+              fallbackRedirectUrl="/dashboard"
             />
-          </label>
+          </div>
+        ) : (
+          <form onSubmit={handleSubmit} className="form-grid">
+            <label className="form-label">
+              Full Name
+              <input
+                value={form.name}
+                placeholder="Full name"
+                onChange={(event) => setForm((prev) => ({ ...prev, name: event.target.value }))}
+                required
+              />
+            </label>
 
-          <label className="form-label">
-            Email Address
-            <input
-              type="email"
-              placeholder="name@example.com"
-              value={form.email}
-              onChange={(event) => setForm((prev) => ({ ...prev, email: event.target.value }))}
-              required
-            />
-          </label>
+            <label className="form-label">
+              Email Address
+              <input
+                type="email"
+                placeholder="name@example.com"
+                value={form.email}
+                onChange={(event) => setForm((prev) => ({ ...prev, email: event.target.value }))}
+                required
+              />
+            </label>
 
-          <label className="form-label">
-            Password
-            <input
-              type="password"
-              placeholder="At least 6 characters"
-              value={form.password}
-              onChange={(event) => setForm((prev) => ({ ...prev, password: event.target.value }))}
-              required
-              minLength={6}
-            />
-          </label>
+            <label className="form-label">
+              Password
+              <input
+                type="password"
+                placeholder="At least 6 characters"
+                value={form.password}
+                onChange={(event) => setForm((prev) => ({ ...prev, password: event.target.value }))}
+                required
+                minLength={6}
+              />
+            </label>
 
-          {error ? <div className="error-text">{error}</div> : null}
-          <button type="submit" className="btn-primary" disabled={loading} style={{ width: '100%', marginTop: 'var(--space-1)' }}>
-            {loading ? 'Creating account…' : 'Create account'}
-          </button>
-        </form>
+            {error ? <div className="error-text">{error}</div> : null}
+            <button type="submit" className="btn-primary" disabled={loading} style={{ width: '100%', marginTop: 'var(--space-1)' }}>
+              {loading ? 'Creating account…' : 'Create account'}
+            </button>
+          </form>
+        )}
 
-        <p style={{ textAlign: 'center', fontSize: '13px', color: 'var(--text-secondary)' }}>
-          Already have an account? <Link to="/login" state={location.state} style={{ color: 'var(--text-primary)', fontWeight: 600 }}>Sign in</Link>
-        </p>
+        {!isClerkEnabled && (
+          <p style={{ textAlign: 'center', fontSize: '13px', color: 'var(--text-secondary)' }}>
+            Already have an account? <Link to="/login" state={location.state} style={{ color: 'var(--text-primary)', fontWeight: 600 }}>Sign in</Link>
+          </p>
+        )}
 
         <div className="auth-trust-footer">
           <span>🔒 Free to use • No card required</span>

@@ -11,6 +11,7 @@
     "db:push": "prisma db push"
   },
   "dependencies": {
+    "@clerk/backend": "^3.16.12",
     "@prisma/client": "^6.0.0",
     "axios": "^1.19.0",
     "bcrypt": "^5.1.1",

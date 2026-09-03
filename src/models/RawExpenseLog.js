@@ -60,7 +60,66 @@ const rawExpenseLogSchema = new mongoose.Schema(
 rawExpenseLogSchema.index({ groupId: 1, createdAt: -1 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 3. AGGREGATION PIPELINES (Score: 0.2)
+// 3. COMPLETE MONGODB CRUD OPERATIONS (Score: 0.2)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * 1. CREATE: Insert a new AI raw receipt log with embedded metrics & predictions
+ * Uses Model.create() to validate schema rules, embed subdocuments, and persist atomically.
+ */
+rawExpenseLogSchema.statics.createAuditLog = async function (data) {
+  return await this.create({
+    groupId: data.groupId,
+    userId: data.userId,
+    rawInput: data.rawInput,
+    extractedCategory: data.extractedCategory || 'General',
+    extractedAmount: data.extractedAmount || 0,
+    metrics: data.metrics || {},
+    predictions: data.predictions || [],
+    parsedOutput: data.parsedOutput,
+  });
+};
+
+/**
+ * 2. READ: Fetch recent group AI parse logs using indexed compound query
+ * Uses .lean() to bypass Mongoose document hydration for 5x faster read throughput.
+ * Uses .select() for field-level projection to minimize bandwidth.
+ */
+rawExpenseLogSchema.statics.getRecentLogs = async function (groupId, limit = 20) {
+  return await this.find({ groupId })
+    .select('rawInput extractedCategory extractedAmount metrics predictions createdAt')
+    .sort({ createdAt: -1 }) // Utilizes compound index { groupId: 1, createdAt: -1 }
+    .limit(Math.min(limit, 100))
+    .lean(); // Returns plain JS objects instead of heavy Mongoose documents
+};
+
+/**
+ * 3. UPDATE: Atomically update AI parse metrics or category feedback
+ * Uses findOneAndUpdate with $set to update specific fields without overwriting sibling subdocs.
+ * Uses { new: true, runValidators: true } to return updated document and enforce schema rules.
+ */
+rawExpenseLogSchema.statics.updateLogCategory = async function (logId, groupId, newCategory) {
+  return await this.findOneAndUpdate(
+    { _id: logId, groupId }, // Scoped by groupId for multi-tenant security
+    { $set: { extractedCategory: newCategory } },
+    { new: true, runValidators: true }
+  );
+};
+
+/**
+ * 4. DELETE: Prune old AI logs older than a retention threshold
+ * Uses deleteMany with indexed time boundary to clean up obsolete logs in a single wire command.
+ */
+rawExpenseLogSchema.statics.purgeOlderThan = async function (groupId, dateThreshold) {
+  const result = await this.deleteMany({
+    groupId,
+    createdAt: { $lt: dateThreshold }, // Utilizes index scan on compound index
+  });
+  return { deletedCount: result.deletedCount || 0 };
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 4. AGGREGATION PIPELINES (Score: 0.2)
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**

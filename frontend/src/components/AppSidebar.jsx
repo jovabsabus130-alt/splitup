@@ -10,24 +10,43 @@ export default function AppSidebar({ mobileOpen, onCloseMobile, onGroupCreated }
 
   const [groups, setGroups] = useState([]);
   const [currentUser, setCurrentUser] = useState(null);
+  
+  // UI & Network State Handlers
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null); // Explicit error state for group fetching
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newGroupName, setNewGroupName] = useState('');
   const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState(null); // Modal-level error banner
 
   useEffect(() => {
     const userStr = localStorage.getItem('splitup_user');
     if (userStr) {
       try {
         setCurrentUser(JSON.parse(userStr));
-      } catch { }
+      } catch {
+        // Corrupted localStorage token fallback
+        setCurrentUser(null);
+      }
     }
   }, []);
 
+  /**
+   * Robust group loader with loading indicators, error capture, and retry support
+   */
   async function loadGroups() {
+    setLoading(true);
+    setError(null);
     try {
       const { data } = await api.get('/api/groups');
       setGroups(data.groups || []);
-    } catch { }
+    } catch (err) {
+      // Extract safe client error message without breaking the sidebar UI
+      const message = err.response?.data?.message || 'Failed to load groups. Server unreachable.';
+      setError(message);
+    } finally {
+      setLoading(false);
+    }
   }
 
   useEffect(() => {
@@ -35,10 +54,15 @@ export default function AppSidebar({ mobileOpen, onCloseMobile, onGroupCreated }
     if (onCloseMobile) onCloseMobile();
   }, [location.pathname]);
 
+  /**
+   * Handle group creation with actionable error feedback
+   */
   async function handleCreateGroup(e) {
     e.preventDefault();
     if (!newGroupName.trim()) return;
     setCreating(true);
+    setCreateError(null);
+
     try {
       const { data } = await api.post('/api/groups', { name: newGroupName.trim() });
       setNewGroupName('');
@@ -48,8 +72,11 @@ export default function AppSidebar({ mobileOpen, onCloseMobile, onGroupCreated }
       if (data.group?.id) {
         navigate(`/groups/${data.group.id}`);
       }
-    } catch { }
-    finally {
+    } catch (err) {
+      // Capture 400 validation or 500 server errors and present inside the modal
+      const message = err.response?.data?.message || 'Unable to create group. Please try again.';
+      setCreateError(message);
+    } finally {
       setCreating(false);
     }
   }
@@ -113,9 +140,28 @@ export default function AppSidebar({ mobileOpen, onCloseMobile, onGroupCreated }
           </div>
 
           <div className="sidebar-groups-list">
-            {groups.length === 0 ? (
+            {/* 1. Loading State */}
+            {loading ? (
+              <div style={{ padding: '12px', color: '#94a3b8', fontSize: '0.85rem', textAlign: 'center' }}>
+                Loading groups…
+              </div>
+            ) : error ? (
+              /* 2. Error State with Retry CTA */
+              <div style={{ padding: '10px 12px', margin: '4px 8px', background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.25)', borderRadius: '6px', fontSize: '0.8rem', color: '#ef4444' }}>
+                <p style={{ margin: '0 0 6px 0', lineHeight: 1.3 }}>{error}</p>
+                <button
+                  type="button"
+                  onClick={loadGroups}
+                  style={{ background: '#ef4444', color: '#fff', border: 'none', borderRadius: '4px', padding: '3px 8px', fontSize: '0.75rem', cursor: 'pointer', fontWeight: 600 }}
+                >
+                  ↻ Retry
+                </button>
+              </div>
+            ) : groups.length === 0 ? (
+              /* 3. Empty State */
               <div className="sidebar-empty-hint">No groups yet</div>
             ) : (
+              /* 4. Populated Groups */
               groups.map((group) => {
                 const isActive = String(group.id) === String(activeGroupId);
                 return (
@@ -144,7 +190,10 @@ export default function AppSidebar({ mobileOpen, onCloseMobile, onGroupCreated }
             <button
               type="button"
               className="sidebar-new-group-btn"
-              onClick={() => setShowCreateModal(true)}
+              onClick={() => {
+                setCreateError(null);
+                setShowCreateModal(true);
+              }}
             >
               + New Group
             </button>
@@ -189,6 +238,14 @@ export default function AppSidebar({ mobileOpen, onCloseMobile, onGroupCreated }
             <div className="card-header">
               <h2 className="card-title">Create Group</h2>
             </div>
+
+            {/* User-visible Modal Error Alert */}
+            {createError && (
+              <div style={{ margin: '8px 0 12px 0', padding: '8px 12px', background: 'rgba(239, 68, 68, 0.12)', border: '1px solid rgba(239, 68, 68, 0.3)', borderRadius: '6px', color: '#ef4444', fontSize: '0.85rem' }}>
+                {createError}
+              </div>
+            )}
+
             <form onSubmit={handleCreateGroup} className="form-grid">
               <input
                 value={newGroupName}

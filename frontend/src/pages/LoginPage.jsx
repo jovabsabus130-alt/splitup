@@ -1,6 +1,9 @@
 import { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { SignIn, useAuth, useUser } from '@clerk/clerk-react';
 import api from '../lib/api';
+
+const isClerkEnabled = !!import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
 
 export default function LoginPage() {
   const navigate = useNavigate();
@@ -38,36 +41,48 @@ export default function LoginPage() {
           <p>Sign in to your SplitUp account</p>
         </div>
 
-        <form onSubmit={handleSubmit} className="form-grid">
-          <label className="form-label">
-            Email Address
-            <input
-              type="email"
-              placeholder="name@example.com"
-              value={form.email}
-              onChange={(event) => setForm((prev) => ({ ...prev, email: event.target.value }))}
-              required
+        {isClerkEnabled ? (
+          <div style={{ display: 'flex', justifyContent: 'center', margin: 'var(--space-2) 0' }}>
+            <SignIn
+              routing="hash"
+              signUpUrl="/register"
+              fallbackRedirectUrl="/dashboard"
             />
-          </label>
-          <label className="form-label">
-            Password
-            <input
-              type="password"
-              placeholder="Enter your password"
-              value={form.password}
-              onChange={(event) => setForm((prev) => ({ ...prev, password: event.target.value }))}
-              required
-            />
-          </label>
-          {error ? <div className="error-text">{error}</div> : null}
-          <button type="submit" className="btn-primary" disabled={loading} style={{ width: '100%', marginTop: 'var(--space-1)' }}>
-            {loading ? 'Signing in…' : 'Sign in'}
-          </button>
-        </form>
+          </div>
+        ) : (
+          <form onSubmit={handleSubmit} className="form-grid">
+            <label className="form-label">
+              Email Address
+              <input
+                type="email"
+                placeholder="name@example.com"
+                value={form.email}
+                onChange={(event) => setForm((prev) => ({ ...prev, email: event.target.value }))}
+                required
+              />
+            </label>
+            <label className="form-label">
+              Password
+              <input
+                type="password"
+                placeholder="Enter your password"
+                value={form.password}
+                onChange={(event) => setForm((prev) => ({ ...prev, password: event.target.value }))}
+                required
+              />
+            </label>
+            {error ? <div className="error-text">{error}</div> : null}
+            <button type="submit" className="btn-primary" disabled={loading} style={{ width: '100%', marginTop: 'var(--space-1)' }}>
+              {loading ? 'Signing in…' : 'Sign in'}
+            </button>
+          </form>
+        )}
 
-        <p style={{ textAlign: 'center', fontSize: '13px', color: 'var(--text-secondary)' }}>
-          Don't have an account? <Link to="/register" state={location.state} style={{ color: 'var(--text-primary)', fontWeight: 600 }}>Create one</Link>
-        </p>
+        {!isClerkEnabled && (
+          <p style={{ textAlign: 'center', fontSize: '13px', color: 'var(--text-secondary)' }}>
+            Don't have an account? <Link to="/register" state={location.state} style={{ color: 'var(--text-primary)', fontWeight: 600 }}>Create one</Link>
+          </p>
+        )}
       </div>
     </div>
   );

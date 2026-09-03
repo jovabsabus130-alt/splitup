@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
+import AIFloatingButton from './AIFloatingButton';
 import AppSidebar from './AppSidebar';
 
 export default function AppLayout({ children }) {
@@ -44,6 +45,9 @@ export default function AppLayout({ children }) {
           {children}
         </div>
       </main>
+
+      {/* ── Globally Floating AI Assistant Button ────────────────────────── */}
+      <AIFloatingButton />
     </div>
   );
 }

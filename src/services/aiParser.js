@@ -113,7 +113,6 @@ async function parseExpenseText(text, members = [], currentUserId = null) {
 
       if (!content) continue;
 
-      // Strip markdown code fences if present
       if (content.startsWith('```')) {
         content = content.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
       }
@@ -135,4 +134,122 @@ async function parseExpenseText(text, members = [], currentUserId = null) {
   );
 }
 
-module.exports = { parseExpenseText, parsedExpenseSchema };
+/**
+ * Generate intelligent spending pattern observations from monthly transaction history.
+ * @param {Object} data - Monthly aggregate spending data
+ */
+async function analyzeMonthlyExpenses(data) {
+  const { monthName, totalSpent, categoryBreakdown = [], transactionCount = 0, topCategory } = data;
+
+  const apiKey = process.env.GOOGLE_AI_API_KEY || process.env.GOOGLE_API_KEY;
+  const configuredModel = process.env.GOOGLE_AI_MODEL || process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
+
+  // Rule-based fallback if API is not accessible
+  const fallbackObservations = [];
+  if (categoryBreakdown.length > 0) {
+    const top = categoryBreakdown[0];
+    fallbackObservations.push(`Your highest spending category this month is ${top.category} at ₹${top.amount.toLocaleString('en-IN')} (${top.percentage}% of total).`);
+    if (categoryBreakdown.length > 1) {
+      const second = categoryBreakdown[1];
+      fallbackObservations.push(`Second highest is ${second.category} taking ₹${second.amount.toLocaleString('en-IN')} (${second.percentage}%).`);
+    }
+    const essentialCategories = ['Rent', 'Grocery', 'Utilities', 'Healthcare', 'Food'];
+    const essentialSum = categoryBreakdown
+      .filter((c) => essentialCategories.includes(c.category))
+      .reduce((sum, c) => sum + c.amount, 0);
+    if (totalSpent > 0) {
+      const essentialPct = Math.round((essentialSum / totalSpent) * 100);
+      fallbackObservations.push(`Essential living costs account for ~${essentialPct}% of your total shared expenses.`);
+    }
+  } else {
+    fallbackObservations.push('No expenses recorded for this month yet.');
+  }
+
+  if (!apiKey) {
+    return {
+      summary: `Total spending for ${monthName || 'this month'} is ₹${totalSpent.toLocaleString('en-IN')} across ${transactionCount} transactions.`,
+      keyObservations: fallbackObservations,
+      savingTips: [
+        'Review recurring expenses and identify shared bulk discounts.',
+        'Track food and entertainment expenses regularly to stay within personal budgets.',
+      ],
+    };
+  }
+
+  const breakdownSummary = categoryBreakdown
+    .map((c) => `- ${c.category}: ₹${c.amount} (${c.percentage}%)`)
+    .join('\n');
+
+  const prompt = [
+    'You are a friendly, highly intelligent personal finance and expense analyst.',
+    `Analyze this user's monthly spending breakdown for ${monthName || 'the current period'}:`,
+    `- Total Spending: ₹${totalSpent}`,
+    `- Total Transactions: ${transactionCount}`,
+    `- Category Breakdown:`,
+    breakdownSummary || 'No data',
+    '',
+    'Provide:',
+    '1. "summary": A concise 1-2 sentence executive summary of spending.',
+    '2. "keyObservations": An array of 3 to 4 insightful bullet observations about spending habits, largest expense drivers, category distribution, and patterns.',
+    '3. "savingTips": An array of 2 actionable, realistic financial or budgeting tips.',
+    '',
+    'Format your response as strict JSON in this format:',
+    '{',
+    '  "summary": string,',
+    '  "keyObservations": string[],',
+    '  "savingTips": string[]',
+    '}',
+  ].join('\n');
+
+  const candidateModels = Array.from(new Set([
+    configuredModel,
+    'gemini-3.5-flash-lite',
+    'gemini-3.5-flash',
+    'gemini-flash-latest',
+  ]));
+
+  for (const model of candidateModels) {
+    try {
+      const response = await axios.post(
+        `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`,
+        {
+          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+          generationConfig: { temperature: 0.2, responseMimeType: 'application/json' },
+        },
+        {
+          headers: { 'Content-Type': 'application/json' },
+          timeout: 20000,
+        }
+      );
+
+      let content = response.data?.candidates?.[0]?.content?.parts
+        ?.map((part) => part?.text || '')
+        .join('')
+        .trim();
+
+      if (!content) continue;
+
+      if (content.startsWith('```')) {
+        content = content.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
+      }
+
+      const parsed = JSON.parse(content);
+      if (parsed.keyObservations && Array.isArray(parsed.keyObservations)) {
+        return parsed;
+      }
+    } catch (e) {
+      // try next model
+    }
+  }
+
+  return {
+    summary: `Total spending for ${monthName || 'this month'} is ₹${totalSpent.toLocaleString('en-IN')} across ${transactionCount} transactions.`,
+    keyObservations: fallbackObservations,
+    savingTips: [
+      'Set target category limits for discretionary categories.',
+      'Regularly reconcile pending balances to maintain healthy group finances.',
+    ],
+  };
+}
+
+module.exports = { parseExpenseText, analyzeMonthlyExpenses, parsedExpenseSchema };
