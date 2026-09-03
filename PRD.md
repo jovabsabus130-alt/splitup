@@ -1,7 +1,7 @@
 # Product Requirements Document (PRD) — SplitUp
 
 ## 1. Executive Summary
-**SplitUp** is an intelligent, high-trust group expense sharing and financial settlement web application. It enables friends, roommates, and travel groups to seamlessly track shared expenses, compute optimal minimum-cash-flow debt settlements, interact with an AI-driven natural language expense parser, and coordinate shared shopping lists in real time.
+**SplitUp** is an intelligent, high-trust group expense sharing and financial settlement web application. It enables friends, roommates, and travel groups to seamlessly track shared expenses, compute optimal minimum-cash-flow debt settlements, interact with an AI-driven natural language expense parser, and coordinate shared shopping lists in real time with enterprise-grade error resilience.
 
 ---
 
@@ -11,6 +11,7 @@ When groups of people share living costs, travel bills, or group events:
 2. **Circular & Redundant Debt:** Without algorithmic optimization, $N$ people end up making $O(N^2)$ cross-payments instead of simplified minimal transactions.
 3. **Friction in Expense Entry:** Typing amounts, categories, and split ratios manually for every bill is tedious and discourages timely logging.
 4. **Uncontrolled Group Access:** Open links without approval lead to unwanted members joining private financial ledgers.
+5. **Brittle Server Failure Handling:** Without structured server-side error handling, unhandled database exceptions crash processes or leak raw database schemas and stack traces to clients.
 
 ---
 
@@ -26,7 +27,7 @@ When groups of people share living costs, travel bills, or group events:
 ### Journey 1: Onboarding & Authentication
 1. User registers with name, email, and password.
 2. An OTP is generated and sent via email for verification.
-3. User logs in, receives a secure JWT, and accesses the responsive dashboard.
+3. User logs in, receives a secure JWT, and accesses the responsive dashboard. Invalid credentials return sanitized operational 401 errors.
 
 ### Journey 2: Group Creation & Secure Member Invites
 1. User creates a group (e.g., "Goa Vacation 2026") and becomes its **Admin**.
@@ -38,6 +39,7 @@ When groups of people share living costs, travel bills, or group events:
 1. User enters an expense manually or types natural language (e.g., *"Cab ₹900 paid by John, split with Sarah and Alex"*).
 2. The built-in AI parser structures the amount, category, and split shares automatically.
 3. User can toggle member checkboxes to exclude individuals, customize exact shares, and view the **Live Remaining Balance Indicator** to guarantee the sum equals the total.
+4. If invalid splits or unauthenticated requests are sent, the backend responds with structured 400/403 validation messages.
 
 ### Journey 4: Debt Simplification & Direct Settlements
 1. The app computes group ledger balances and runs the **Greedy Min-Cash-Flow algorithm** to minimize cross-payments.
@@ -62,14 +64,20 @@ When groups of people share living costs, travel bills, or group events:
 | **AI Parsing** | Natural Language Parser | LLM API (Groq/Gemini) parsing free-form expense sentences into structured JSON | P0 (Mandatory) |
 | **AI Audit** | Unstructured Audit Log | MongoDB logging of raw AI prompt inputs, outputs, tokens, and latency | P1 |
 | **Shopping** | Collaborative List | Real-time shared group shopping checklist with item prices | P2 |
+| **Error Handling** | Centralized Error Engine | Project-wide 4-arity Express middleware catching operational vs system errors | P0 (Mandatory) |
+| **Error Handling** | Schema & DB Error Mapping | Automatic translation of Zod validation failures, Prisma errors, and JWT expiration | P0 (Mandatory) |
 
 ---
 
 ## 6. Non-Functional Requirements
 - **Financial Data Consistency:** Strict ACID compliance for expense transactions and settlement ledgers using PostgreSQL and Prisma transactions.
+- **Server-Side Error Handling & Resilience:**
+  - Standardized JSON error schema across all endpoints (`{ success: false, message: "...", errors?: [...] }`).
+  - Strict **Information Leakage Prevention**: In production, stack traces, database schema details, and SQL query strings are masked from clients.
+  - Process-level unhandled Promise rejection and uncaught exception guards preventing unexpected server crashes.
 - **Security & Integrity:** All passwords hashed with bcrypt ($10$ rounds), JWT expiration, Zod request payload schema validation on all API endpoints.
 - **Latency & Performance:** API response times $< 100\text{ ms}$ for core ledger queries; debt simplification computed in $O(N \log N)$ time.
-- **UX & Responsiveness:** Clean modern typography, dark/light contrast adherence, responsive CSS grid/flexbox across mobile, tablet, and desktop viewports.
+- **UX & Responsiveness:** Clean modern typography, dark/light contrast adherence, responsive CSS grid/flexbox across mobile, tablet, and desktop viewports, with inline retry banners for failed server calls.
 
 ---
 

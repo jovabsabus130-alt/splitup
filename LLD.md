@@ -63,6 +63,7 @@ model Expense {
   group       Group         @relation(fields: [groupId], references: [id], onDelete: Cascade)
   paidBy      User          @relation("ExpensePaidBy", fields: [paidById], references: [id], onDelete: Restrict)
   splits      ExpenseSplit[]
+  editHistory ExpenseEditHistory[]
 }
 
 model ExpenseSplit {
@@ -83,7 +84,9 @@ model Settlement {
   fromId        String
   toId          String
   amount        Decimal   @db.Decimal(12, 2)
-  status        String    @default("pending") // "pending" | "completed"
+  status        String    @default("pending") // "pending" | "pending_confirmation" | "completed" | "rejected"
+  rejectionReason String?
+  paidAt        DateTime?
   confirmedById String?
   confirmedAt   DateTime?
   createdAt     DateTime  @default(now())
@@ -93,141 +96,103 @@ model Settlement {
   to            User      @relation("SettlementTo", fields: [toId], references: [id], onDelete: Cascade)
   confirmedBy   User?     @relation("SettlementConfirmedBy", fields: [confirmedById], references: [id], onDelete: SetNull)
 }
-
-model JoinRequest {
-  id        String   @id @default(cuid())
-  groupId   String
-  userId    String
-  status    String   @default("pending") // "pending" | "approved" | "denied"
-  createdAt DateTime @default(now())
-
-  group     Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@unique([groupId, userId])
-}
-
-model OtpCode {
-  id        String   @id @default(cuid())
-  userId    String
-  code      String
-  expiresAt DateTime
-  used      Boolean  @default(false)
-  createdAt DateTime @default(now())
-
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-}
-```
-
-### 1.2 MongoDB Document Models (via Mongoose)
-
-```javascript
-// models/AiParseLog.js
-const AiParseLogSchema = new mongoose.Schema({
-  userId: { type: String, required: true },
-  groupId: { type: String, required: true },
-  inputText: { type: String, required: true },
-  modelOutput: { type: Object, required: true },
-  tokensUsed: { type: Number },
-  latencyMs: { type: Number },
-  createdAt: { type: Date, default: Date.now }
-});
 ```
 
 ---
 
-## 2. API Endpoint Specifications
+## 2. Server-Side Error Handling Architecture (Low-Level Design)
 
-### 2.1 Authentication Endpoints
+### 2.1 Custom Error Class Hierarchy
 
-#### `POST /api/auth/register`
-- **Description:** Registers a new user and sends an email verification OTP code.
-- **Request Body (Zod Validated):**
-  ```json
-  {
-    "name": "Sarah Connor",
-    "email": "sarah@example.com",
-    "password": "SecurePassword123"
+```mermaid
+classDiagram
+  class Error {
+    +string message
+    +string stack
   }
-  ```
-- **Responses:**
-  - `201 Created`: `{ "message": "Verification code sent to your email", "userId": "..." }`
-  - `400 Bad Request`: `{ "message": "Invalid registration payload" }`
-  - `409 Conflict`: `{ "message": "Email already registered" }`
 
-#### `POST /api/auth/verify-email`
-- **Request Body:** `{ "userId": "...", "code": "849201" }`
-- **Responses:**
-  - `200 OK`: `{ "token": "jwt_string", "user": { "id": "...", "name": "...", "email": "..." } }`
-  - `400 Bad Request`: `{ "message": "Invalid or expired verification code" }`
+  class AppError {
+    +int statusCode
+    +bool isOperational
+    +Array errors
+    +constructor(message, statusCode, isOperational, errors)
+  }
 
-#### `POST /api/auth/login`
-- **Request Body:** `{ "email": "sarah@example.com", "password": "SecurePassword123" }`
-- **Responses:**
-  - `200 OK`: `{ "token": "jwt_string", "user": { "id": "...", "name": "...", "email": "..." } }`
-  - `401 Unauthorized`: `{ "message": "Invalid email or password" }`
+  class BadRequestError {
+    +constructor(message, errors)
+  }
+
+  class ValidationError {
+    +constructor(message, errors)
+  }
+
+  class UnauthorizedError {
+    +constructor(message)
+  }
+
+  class ForbiddenError {
+    +constructor(message)
+  }
+
+  class NotFoundError {
+    +constructor(message)
+  }
+
+  class ConflictError {
+    +constructor(message)
+  }
+
+  class InternalServerError {
+    +constructor(message)
+  }
+
+  Error <|-- AppError
+  AppError <|-- BadRequestError
+  AppError <|-- ValidationError
+  AppError <|-- UnauthorizedError
+  AppError <|-- ForbiddenError
+  AppError <|-- NotFoundError
+  AppError <|-- ConflictError
+  AppError <|-- InternalServerError
+```
+
+### 2.2 Standardized JSON Error Response Schema
+
+All API error responses adhere to a consistent contract:
+```json
+{
+  "success": false,
+  "code": 400,
+  "message": "Human-readable operational error message",
+  "errors": [
+    {
+      "path": "splits.0.share",
+      "message": "share must be a positive number"
+    }
+  ]
+}
+```
+
+### 2.3 HTTP Status Code Translation Matrix
+
+| Error Condition / Trigger | Mapped Status Code | Error Class / Handler | Sanitized Client Message |
+|---|---|---|---|
+| Zod validation schema failure | `400 Bad Request` | `ValidationError` | `"Request validation failed"` + field path array |
+| Unbalanced split shares | `400 Bad Request` | `BadRequestError` | `"Splits must sum to the total expense amount"` |
+| Malformed JSON body | `400 Bad Request` | Body Parser Handler | `"Malformed JSON payload in request body"` |
+| Missing / invalid JWT token | `401 Unauthorized` | `UnauthorizedError` | `"Authentication token invalid or expired"` |
+| Non-member accessing private group | `403 Forbidden` | `ForbiddenError` | `"You are not a member of this group"` |
+| Non-admin deleting group | `403 Forbidden` | `ForbiddenError` | `"Only the group admin can delete this group"` |
+| Group / Expense / User not found | `404 Not Found` | `NotFoundError` | `"Requested resource not found"` |
+| Undefined endpoint route | `404 Not Found` | `notFoundHandler` | `"Cannot {METHOD} {PATH}"` |
+| Duplicate email registration (Prisma P2002) | `409 Conflict` | `ConflictError` | `"Email is already registered"` |
+| Unexpected DB crash / unhandled bug | `500 Server Error` | `InternalServerError` | `"Internal server error. Please try again later."` |
 
 ---
 
-### 2.2 Group & Join Request Endpoints
+## 3. Core Algorithms & Logic
 
-#### `GET /api/groups`
-- **Headers:** `Authorization: Bearer <jwt_token>`
-- **Response `200 OK`:**
-  ```json
-  {
-    "groups": [
-      {
-        "id": "clx...",
-        "name": "Goa Trip 2026",
-        "adminId": "clu...",
-        "isAdmin": true,
-        "pendingRequestsCount": 2,
-        "pendingRequests": [
-          {
-            "id": "req_1",
-            "userId": "usr_9",
-            "status": "pending",
-            "user": { "name": "Alex", "email": "alex@gmail.com" }
-          }
-        ]
-      }
-    ]
-  }
-  ```
-
-#### `PATCH /api/groups/:groupId/join-requests/:requestId`
-- **Request Body:** `{ "status": "approved" }` (or `"denied"`)
-- **Responses:**
-  - `200 OK`: `{ "message": "Member approved and added to group!" }`
-  - `403 Forbidden`: `{ "message": "Only the group admin can moderate requests" }`
-
----
-
-### 2.3 Expense & Split Endpoints
-
-#### `POST /api/groups/:groupId/expenses`
-- **Request Body (Zod Validated):**
-  ```json
-  {
-    "amount": 1500.00,
-    "category": "Dining",
-    "description": "Seafood Dinner",
-    "paidById": "usr_1",
-    "splits": [
-      { "userId": "usr_1", "share": 500.00 },
-      { "userId": "usr_2", "share": 500.00 },
-      { "userId": "usr_3", "share": 500.00 }
-    ]
-  }
-  ```
-- **Business Rule:** Total of split shares must equal the total expense amount within `EPSILON = 0.01`.
-- **Database Operation:** Executed inside an atomic `prisma.$transaction`.
-- **Response `201 Created`:** `{ "expense": { "id": "exp_...", "amount": "1500.00", ... } }`
-
----
-
-### 2.4 Debt Simplification Algorithm Implementation
+### 3.1 Debt Simplification Algorithm (Greedy Min-Cash-Flow)
 
 ```javascript
 // services/debtSimplification.js
@@ -242,19 +207,20 @@ function simplifyDebts(balances) {
     else if (net < -EPSILON) debtors.push({ userId: b.userId, amount: -net });
   }
 
-  // Sort descending by magnitude
+  // Sort descending by magnitude: O(N log N)
   creditors.sort((a, b) => b.amount - a.amount);
   debtors.sort((a, b) => b.amount - a.amount);
 
   const settlements = [];
   let i = 0, j = 0;
 
+  // Two-pointer matching: O(N)
   while (i < creditors.length && j < debtors.length) {
     const amount = Math.min(creditors[i].amount, debtors[j].amount);
     settlements.push({
       from: debtors[j].userId,
       to: creditors[i].userId,
-      amount: Number(amount.toFixed(2))
+      amount: Number(amount.toFixed(2)),
     });
 
     creditors[i].amount -= amount;
@@ -270,13 +236,13 @@ function simplifyDebts(balances) {
 
 ---
 
-## 3. Frontend Architecture & Component Hierarchy
+## 4. Frontend Architecture & Component Hierarchy
 
 ```
 <App>
  ├── <ProtectedRoute>
  │    └── <AppLayout>
- │         ├── <AppSidebar> (Groups list, + New Group Modal, User Profile, Logout)
+ │         ├── <AppSidebar> (Groups list, Loading Skeletons, Error Banner with ↻ Retry)
  │         └── <Routes>
  │              ├── <DashboardPage> (Groups Grid, Top-right Bell Notification Icon & Modal)
  │              ├── <GroupDetailPage> (Expense Ledger, Add Expense Modal, AI Natural Language Parser)
@@ -290,7 +256,8 @@ function simplifyDebts(balances) {
 
 ---
 
-## 4. Automated Testing Strategy
-Unit tests run using the native Node.js Test Runner (`node:test`):
-- `src/__tests__/debtSimplification.test.js`: Validates 0-balance groups, 2-person settlements, 3-person multi-debtor graph reductions, and sub-cent precision bounds.
-- Command to run: `npm test`.
+## 5. Automated Testing Strategy
+Unit tests executed using Node.js Native Test Runner (`node:test`):
+- `src/__tests__/debtSimplification.test.js`: Validates 0-balance groups, 2-person settlements, 3-person multi-debtor graph reductions.
+- `src/__tests__/servicesAndSecurity.test.js`: Validates centralized server error handler, status code translations, production error sanitization, Zod formatting, and JWT lifecycle.
+- Command: `npm test` (36 passing unit tests).
