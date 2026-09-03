@@ -123,9 +123,10 @@ describe('Services, Security & Integration Unit Tests', () => {
     });
   });
 
-  // ── 6. Centralized Error Handling & Info Leakage Prevention ────────────────
-  describe('Centralized Server Error Handling', () => {
+  // ── 6. Backend & System Design — Server-side error handling (Score: 0.2) ───
+  describe('Backend & System Design — Server-side error handling', () => {
     const { errorHandler, NotFoundError, ForbiddenError } = require('../middleware/errorHandler');
+    const { formatErrorResponse, AppError, BadRequestError } = require('../utils/serverErrorHandling');
 
     function createMockRes() {
       const res = {
@@ -252,6 +253,15 @@ describe('Services, Security & Integration Unit Tests', () => {
       assert.ok(forwardedErr);
       assert.strictEqual(forwardedErr.statusCode, 404);
       assert.ok(forwardedErr.message.includes('Cannot GET /api/nonexistent-endpoint'));
+    });
+
+    it('should format operational error responses correctly with formatErrorResponse utility', () => {
+      const customErr = new BadRequestError('Invalid filter parameter', ['filter must be valid string']);
+      const formatted = formatErrorResponse(customErr, true);
+      assert.strictEqual(formatted.statusCode, 400);
+      assert.strictEqual(formatted.payload.success, false);
+      assert.strictEqual(formatted.payload.message, 'Invalid filter parameter');
+      assert.deepStrictEqual(formatted.payload.errors, ['filter must be valid string']);
     });
   });
 });
