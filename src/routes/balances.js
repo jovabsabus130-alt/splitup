@@ -4,27 +4,27 @@ const auth = require('../middleware/auth');
 const { getGroupBalances } = require('../services/balanceService');
 const { simplifyDebts } = require('../services/debtSimplification');
 const prisma = require('../lib/prisma');
+const { asyncHandler, ForbiddenError } = require('../middleware/errorHandler');
 
 const router = express.Router();
 
 router.use(auth);
 
-router.get('/groups/:groupId/balances', async (req, res) => {
+router.get('/groups/:groupId/balances', asyncHandler(async (req, res) => {
   const { groupId } = req.params;
 
-  try {
-    const membership = await prisma.groupMember.findUnique({
-      where: {
-        userId_groupId: {
-          userId: req.userId,
-          groupId,
-        },
+  const membership = await prisma.groupMember.findUnique({
+    where: {
+      userId_groupId: {
+        userId: req.userId,
+        groupId,
       },
-    });
+    },
+  });
 
-    if (!membership) {
-      return res.status(403).json({ message: 'You are not a member of this group' });
-    }
+  if (!membership) {
+    throw new ForbiddenError('You are not a member of this group');
+  }
 
     const rawBalances = await getGroupBalances(groupId);
     const simplified = simplifyDebts(rawBalances);
@@ -119,10 +119,6 @@ router.get('/groups/:groupId/balances', async (req, res) => {
         createdAt: s.createdAt,
       })),
     });
-  } catch (error) {
-    console.error('Fetch balances error:', error);
-    return res.status(500).json({ message: 'Failed to fetch balances' });
-  }
-});
+}));
 
 module.exports = router;

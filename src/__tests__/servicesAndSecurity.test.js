@@ -182,5 +182,76 @@ describe('Services, Security & Integration Unit Tests', () => {
       assert.strictEqual(res.statusCode, 409);
       assert.strictEqual(res.body.message, 'A resource with this unique attribute already exists.');
     });
+
+    it('should format Zod schema validation errors with field paths', () => {
+      const res = createMockRes();
+      const zodErr = new Error('Validation failed');
+      zodErr.name = 'ZodError';
+      zodErr.errors = [
+        { path: ['amount'], message: 'amount must be positive' },
+        { path: ['splits', 0, 'userId'], message: 'userId is required' },
+      ];
+      errorHandler(zodErr, { method: 'POST', originalUrl: '/api/groups/1/expenses' }, res, () => {});
+
+      assert.strictEqual(res.statusCode, 400);
+      assert.strictEqual(res.body.message, 'Request validation failed');
+      assert.strictEqual(res.body.errors.length, 2);
+      assert.strictEqual(res.body.errors[0].path, 'amount');
+      assert.strictEqual(res.body.errors[1].path, 'splits.0.userId');
+    });
+
+    it('should handle JWT expiration and signature errors as 401 Unauthorized', () => {
+      const res1 = createMockRes();
+      const jwtExpiredErr = new Error('jwt expired');
+      jwtExpiredErr.name = 'TokenExpiredError';
+      errorHandler(jwtExpiredErr, { method: 'GET', originalUrl: '/api/groups' }, res1, () => {});
+      assert.strictEqual(res1.statusCode, 401);
+      assert.strictEqual(res1.body.message, 'Authentication token expired. Please login again.');
+
+      const res2 = createMockRes();
+      const jwtInvalidErr = new Error('invalid signature');
+      jwtInvalidErr.name = 'JsonWebTokenError';
+      errorHandler(jwtInvalidErr, { method: 'GET', originalUrl: '/api/groups' }, res2, () => {});
+      assert.strictEqual(res2.statusCode, 401);
+      assert.strictEqual(res2.body.message, 'Invalid authentication token');
+    });
+
+    it('should handle malformed JSON syntax errors as 400 Bad Request', () => {
+      const res = createMockRes();
+      const syntaxErr = new SyntaxError('Unexpected token in JSON');
+      syntaxErr.status = 400;
+      syntaxErr.body = '{ bad json }';
+      errorHandler(syntaxErr, { method: 'POST', originalUrl: '/api/groups' }, res, () => {});
+
+      assert.strictEqual(res.statusCode, 400);
+      assert.strictEqual(res.body.message, 'Malformed JSON payload in request body');
+    });
+
+    it('should catch rejected async route promises using asyncHandler', async () => {
+      const { asyncHandler } = require('../middleware/errorHandler');
+      let caughtError = null;
+      const failingRoute = asyncHandler(async () => {
+        throw new Error('Async database failure');
+      });
+
+      await failingRoute({}, {}, (err) => {
+        caughtError = err;
+      });
+
+      assert.ok(caughtError);
+      assert.strictEqual(caughtError.message, 'Async database failure');
+    });
+
+    it('should handle 404 undefined routes via notFoundHandler', () => {
+      const { notFoundHandler } = require('../middleware/errorHandler');
+      let forwardedErr = null;
+      notFoundHandler({ method: 'GET', originalUrl: '/api/nonexistent-endpoint' }, {}, (err) => {
+        forwardedErr = err;
+      });
+
+      assert.ok(forwardedErr);
+      assert.strictEqual(forwardedErr.statusCode, 404);
+      assert.ok(forwardedErr.message.includes('Cannot GET /api/nonexistent-endpoint'));
+    });
   });
 });

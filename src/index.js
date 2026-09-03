@@ -13,7 +13,7 @@ const shoppingRoutes = require('./routes/shopping');
 const notificationRoutes = require('./routes/notifications');
 const { settlementsRouter } = require('./routes/settlements');
 const dashboardRoutes = require('./routes/dashboard');
-const { errorHandler } = require('./middleware/errorHandler');
+const { errorHandler, notFoundHandler } = require('./middleware/errorHandler');
 require('./services/cronService'); // Initialize background cron tasks & keep-alive ping
 
 const app = express();
@@ -35,8 +35,20 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok' });
 });
 
+// 404 Catch-All Middleware for undefined endpoints
+app.use(notFoundHandler);
+
 // Centralized Express Error-Handling Middleware (Must be registered after all route handlers)
 app.use(errorHandler);
+
+// Process-level unhandled rejection & uncaught exception safeguards
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[Process Error] Unhandled Promise Rejection at:', promise, 'reason:', reason);
+});
+
+process.on('uncaughtException', (error) => {
+  console.error('[Process Error] Uncaught Exception thrown:', error);
+});
 
 async function start() {
   try {

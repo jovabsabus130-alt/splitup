@@ -5,6 +5,7 @@ const { z } = require('zod');
 
 const prisma = require('../lib/prisma');
 const { sanitizeMiddleware } = require('../middleware/sanitize');
+const { asyncHandler, UnauthorizedError, ConflictError } = require('../middleware/errorHandler');
 
 const router = express.Router();
 router.use(sanitizeMiddleware);
@@ -28,80 +29,90 @@ function userPublic(user) {
 // ── Schemas ───────────────────────────────────────────────────────────────────
 
 const registerSchema = z.object({
-  name: z.string().trim().min(1),
-  email: z.string().trim().email(),
-  password: z.string().min(6),
+  name: z.string().trim().min(1, 'Name is required'),
+  email: z.string().trim().email('Invalid email address'),
+  password: z.string().min(6, 'Password must be at least 6 characters'),
   phone: z.string().trim().optional(),
   upiId: z.string().trim().optional(),
 });
 
 const loginSchema = z.object({
-  email: z.string().trim().email(),
-  password: z.string().min(1),
+  email: z.string().trim().email('Invalid email address'),
+  password: z.string().min(1, 'Password is required'),
 });
 
 // ── POST /register ────────────────────────────────────────────────────────────
-router.post('/register', async (req, res) => {
+router.post('/register', asyncHandler(async (req, res) => {
   const parsed = registerSchema.safeParse(req.body);
   if (!parsed.success) {
-    return res.status(400).json({ message: 'Invalid register payload' });
+    return res.status(400).json({
+      message: 'Invalid register payload',
+      errors: parsed.error.issues.map((i) => ({ path: i.path.join('.'), message: i.message })),
+    });
   }
 
   const { name, email, password, phone, upiId } = parsed.data;
+  const normalizedEmail = email.toLowerCase().trim();
 
-  try {
-    const passwordHash = await bcrypt.hash(password, 10);
+  // Check existing user to avoid unnecessary hashing
+  const existingUser = await prisma.user.findUnique({
+    where: { email: normalizedEmail },
+    select: { id: true },
+  });
 
-    const user = await prisma.user.create({
-      data: {
-        name,
-        email: email.toLowerCase().trim(),
-        passwordHash,
-        emailVerified: true,
-        ...(phone ? { phone } : {}),
-        ...(upiId ? { upiId } : {}),
-      },
-    });
-
-    const token = signToken(user.id);
-
-    return res.status(201).json({
-      token,
-      user: userPublic(user),
-      message: 'Account created successfully',
-    });
-  } catch (error) {
-    if (error.code === 'P2002') {
-      return res.status(409).json({ message: 'Email already exists' });
-    }
-    return res.status(500).json({ message: 'Registration failed' });
+  if (existingUser) {
+    throw new ConflictError('An account with this email already exists.');
   }
-});
+
+  const passwordHash = await bcrypt.hash(password, 10);
+
+  const user = await prisma.user.create({
+    data: {
+      name,
+      email: normalizedEmail,
+      passwordHash,
+      emailVerified: true,
+      ...(phone ? { phone } : {}),
+      ...(upiId ? { upiId } : {}),
+    },
+  });
+
+  const token = signToken(user.id);
+
+  return res.status(201).json({
+    token,
+    user: userPublic(user),
+    message: 'Account created successfully',
+  });
+}));
 
 // ── POST /login ───────────────────────────────────────────────────────────────
-router.post('/login', async (req, res) => {
+router.post('/login', asyncHandler(async (req, res) => {
   const parsed = loginSchema.safeParse(req.body);
   if (!parsed.success) {
-    return res.status(400).json({ message: 'Invalid login payload' });
+    return res.status(400).json({
+      message: 'Invalid login payload',
+      errors: parsed.error.issues.map((i) => ({ path: i.path.join('.'), message: i.message })),
+    });
   }
 
   const { email, password } = parsed.data;
 
-  try {
-    const user = await prisma.user.findUnique({
-      where: { email: email.toLowerCase().trim() },
-    });
+  const user = await prisma.user.findUnique({
+    where: { email: email.toLowerCase().trim() },
+  });
 
-    if (!user) return res.status(401).json({ message: 'Invalid credentials' });
-
-    const isPasswordValid = await bcrypt.compare(password, user.passwordHash);
-    if (!isPasswordValid) return res.status(401).json({ message: 'Invalid credentials' });
-
-    const token = signToken(user.id);
-    return res.status(200).json({ token, user: userPublic(user) });
-  } catch (error) {
-    return res.status(500).json({ message: 'Login failed' });
+  if (!user) {
+    throw new UnauthorizedError('Invalid email or password');
   }
-});
+
+  const isPasswordValid = await bcrypt.compare(password, user.passwordHash);
+  if (!isPasswordValid) {
+    throw new UnauthorizedError('Invalid email or password');
+  }
+
+  const token = signToken(user.id);
+  return res.status(200).json({ token, user: userPublic(user) });
+}));
 
 module.exports = router;

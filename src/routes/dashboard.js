@@ -3,12 +3,12 @@ const auth = require('../middleware/auth');
 const prisma = require('../lib/prisma');
 const { getGroupBalances } = require('../services/balanceService');
 const { analyzeMonthlyExpenses } = require('../services/aiParser');
+const { asyncHandler } = require('../middleware/errorHandler');
 
 const router = express.Router();
 router.use(auth);
 
-router.get('/', async (req, res) => {
-  try {
+router.get('/', asyncHandler(async (req, res) => {
     const memberships = await prisma.groupMember.findMany({
       where: { userId: req.userId },
       include: {
@@ -199,17 +199,12 @@ router.get('/', async (req, res) => {
       pendingSettlements,
       categoryBreakdown: categoryBreakdown.slice(0, 6),
     });
-  } catch (error) {
-    console.error('Dashboard fetch error:', error);
-    return res.status(500).json({ message: 'Failed to load dashboard data' });
-  }
-});
+}));
 
 // ── GET /api/dashboard/ai-analysis ───────────────────────────────────────────
 // AI Monthly Expense Analysis endpoint
-router.get('/ai-analysis', async (req, res) => {
-  try {
-    const { month, groupId } = req.query;
+router.get('/ai-analysis', asyncHandler(async (req, res) => {
+  const { month, groupId } = req.query;
 
     // Get all groups of user
     const memberships = await prisma.groupMember.findMany({
@@ -311,10 +306,6 @@ router.get('/ai-analysis', async (req, res) => {
       aiInsights,
       availableMonths,
     });
-  } catch (error) {
-    console.error('AI Monthly analysis error:', error);
-    return res.status(500).json({ message: 'Failed to generate monthly expense analysis' });
-  }
-});
+}));
 
 module.exports = router;
