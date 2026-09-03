@@ -397,6 +397,8 @@ router.put('/groups/:groupId/expenses/:expenseId', asyncHandler(async (req, res)
     changes,
     message: 'Expense updated successfully! Edit history preserved.',
   });
+}));
+
 // ── GET /groups/:groupId/expenses/:expenseId/history ─────────────────────────
 router.get('/groups/:groupId/expenses/:expenseId/history', asyncHandler(async (req, res) => {
   const { groupId, expenseId } = req.params;
