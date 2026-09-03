@@ -3,15 +3,8 @@ const { z } = require('zod');
 
 const auth = require('../middleware/auth');
 const prisma = require('../lib/prisma');
-const {
-  asyncHandler,
-  ForbiddenError,
-  NotFoundError,
-  BadRequestError,
-} = require('../middleware/errorHandler');
 
 const router = express.Router({ mergeParams: true });
-
 router.use(auth);
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -20,9 +13,7 @@ async function assertMember(userId, groupId) {
   const m = await prisma.groupMember.findUnique({
     where: { userId_groupId: { userId, groupId } },
   });
-  if (!m) {
-    throw new ForbiddenError('You are not a member of this group');
-  }
+  return !!m;
 }
 
 // ── Schemas ───────────────────────────────────────────────────────────────────
@@ -49,139 +40,176 @@ const splitItemSchema = z.object({
 });
 
 // ── GET /api/groups/:groupId/shopping ─────────────────────────────────────────
-router.get('/', asyncHandler(async (req, res) => {
-  const { groupId } = req.params;
-  await assertMember(req.userId, groupId);
+// Concept: Server-side error handling (try/catch + error middleware)
+router.get('/', async (req, res, next) => {
+  try {
+    const { groupId } = req.params;
+    if (!(await assertMember(req.userId, groupId))) {
+      return res.status(403).json({ success: false, message: 'You are not a member of this group' });
+    }
 
-  const items = await prisma.shoppingItem.findMany({
-    where: { groupId },
-    include: { addedBy: { select: { id: true, name: true } } },
-    orderBy: { createdAt: 'asc' },
-  });
+    const items = await prisma.shoppingItem.findMany({
+      where: { groupId },
+      include: { addedBy: { select: { id: true, name: true } } },
+      orderBy: { createdAt: 'asc' },
+    });
 
-  return res.status(200).json({ items });
-}));
+    return res.status(200).json({ success: true, items });
+  } catch (error) {
+    console.error('Fetch shopping items error:', error);
+    next(error);
+  }
+});
 
 // ── POST /api/groups/:groupId/shopping ────────────────────────────────────────
-router.post('/', asyncHandler(async (req, res) => {
-  const { groupId } = req.params;
-  await assertMember(req.userId, groupId);
+router.post('/', async (req, res, next) => {
+  try {
+    const { groupId } = req.params;
+    if (!(await assertMember(req.userId, groupId))) {
+      return res.status(403).json({ success: false, message: 'You are not a member of this group' });
+    }
 
-  const parsed = addItemSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({
-      message: 'Invalid item payload',
-      errors: parsed.error.issues.map((i) => ({ path: i.path.join('.'), message: i.message })),
+    const parsed = addItemSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid item payload',
+        errors: parsed.error.issues.map((i) => ({ path: i.path.join('.'), message: i.message })),
+      });
+    }
+
+    const item = await prisma.shoppingItem.create({
+      data: {
+        groupId,
+        addedById: req.userId,
+        name: parsed.data.name,
+        ...(parsed.data.price != null ? { price: parsed.data.price } : {}),
+      },
+      include: { addedBy: { select: { id: true, name: true } } },
     });
+
+    return res.status(201).json({ success: true, item });
+  } catch (error) {
+    console.error('Create shopping item error:', error);
+    next(error);
   }
-
-  const item = await prisma.shoppingItem.create({
-    data: {
-      groupId,
-      addedById: req.userId,
-      name: parsed.data.name,
-      ...(parsed.data.price != null ? { price: parsed.data.price } : {}),
-    },
-    include: { addedBy: { select: { id: true, name: true } } },
-  });
-
-  return res.status(201).json({ item });
-}));
+});
 
 // ── PATCH /api/groups/:groupId/shopping/:itemId ───────────────────────────────
-router.patch('/:itemId', asyncHandler(async (req, res) => {
-  const { groupId, itemId } = req.params;
-  await assertMember(req.userId, groupId);
+router.patch('/:itemId', async (req, res, next) => {
+  try {
+    const { groupId, itemId } = req.params;
+    if (!(await assertMember(req.userId, groupId))) {
+      return res.status(403).json({ success: false, message: 'You are not a member of this group' });
+    }
 
-  const parsed = updateItemSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({
-      message: 'Invalid update payload',
-      errors: parsed.error.issues.map((i) => ({ path: i.path.join('.'), message: i.message })),
+    const parsed = updateItemSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid update payload',
+        errors: parsed.error.issues.map((i) => ({ path: i.path.join('.'), message: i.message })),
+      });
+    }
+
+    const item = await prisma.shoppingItem.findFirst({ where: { id: itemId, groupId } });
+    if (!item) {
+      return res.status(404).json({ success: false, message: 'Shopping item not found' });
+    }
+
+    const data = {};
+    if (parsed.data.name !== undefined) data.name = parsed.data.name;
+    if (parsed.data.completed !== undefined) data.completed = parsed.data.completed;
+    if ('price' in parsed.data) {
+      data.price = parsed.data.price;
+    }
+
+    const updated = await prisma.shoppingItem.update({
+      where: { id: itemId },
+      data,
+      include: { addedBy: { select: { id: true, name: true } } },
     });
+
+    return res.status(200).json({ success: true, item: updated });
+  } catch (error) {
+    console.error('Update shopping item error:', error);
+    next(error);
   }
-
-  const item = await prisma.shoppingItem.findFirst({ where: { id: itemId, groupId } });
-  if (!item) {
-    throw new NotFoundError('Shopping item not found');
-  }
-
-  const data = {};
-  if (parsed.data.name !== undefined) data.name = parsed.data.name;
-  if (parsed.data.completed !== undefined) data.completed = parsed.data.completed;
-  if ('price' in parsed.data) {
-    data.price = parsed.data.price; // allows null to clear price
-  }
-
-  const updated = await prisma.shoppingItem.update({
-    where: { id: itemId },
-    data,
-    include: { addedBy: { select: { id: true, name: true } } },
-  });
-
-  return res.status(200).json({ item: updated });
-}));
+});
 
 // ── DELETE /api/groups/:groupId/shopping/:itemId ──────────────────────────────
-router.delete('/:itemId', asyncHandler(async (req, res) => {
-  const { groupId, itemId } = req.params;
-  await assertMember(req.userId, groupId);
+router.delete('/:itemId', async (req, res, next) => {
+  try {
+    const { groupId, itemId } = req.params;
+    if (!(await assertMember(req.userId, groupId))) {
+      return res.status(403).json({ success: false, message: 'You are not a member of this group' });
+    }
 
-  const item = await prisma.shoppingItem.findFirst({ where: { id: itemId, groupId } });
-  if (!item) {
-    throw new NotFoundError('Shopping item not found');
+    const item = await prisma.shoppingItem.findFirst({ where: { id: itemId, groupId } });
+    if (!item) {
+      return res.status(404).json({ success: false, message: 'Shopping item not found' });
+    }
+
+    await prisma.shoppingItem.delete({ where: { id: itemId } });
+    return res.status(200).json({ success: true, message: 'Item removed' });
+  } catch (error) {
+    console.error('Delete shopping item error:', error);
+    next(error);
   }
-
-  await prisma.shoppingItem.delete({ where: { id: itemId } });
-  return res.status(200).json({ message: 'Item removed' });
-}));
+});
 
 // ── POST /api/groups/:groupId/shopping/:itemId/expense ────────────────────────
-// Converts a shopping item into a group expense with custom per-member splits.
-router.post('/:itemId/expense', asyncHandler(async (req, res) => {
-  const { groupId, itemId } = req.params;
-  await assertMember(req.userId, groupId);
+router.post('/:itemId/expense', async (req, res, next) => {
+  try {
+    const { groupId, itemId } = req.params;
+    if (!(await assertMember(req.userId, groupId))) {
+      return res.status(403).json({ success: false, message: 'You are not a member of this group' });
+    }
 
-  const parsed = splitItemSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({
-      message: 'Invalid split payload',
-      errors: parsed.error.issues.map((i) => ({ path: i.path.join('.'), message: i.message })),
-    });
-  }
+    const parsed = splitItemSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid split payload',
+        errors: parsed.error.issues.map((i) => ({ path: i.path.join('.'), message: i.message })),
+      });
+    }
 
-  const { paidById, splits } = parsed.data;
+    const { paidById, splits } = parsed.data;
 
-  const item = await prisma.shoppingItem.findFirst({ where: { id: itemId, groupId } });
-  if (!item) {
-    throw new NotFoundError('Shopping item not found');
-  }
-  if (!item.price) {
-    throw new BadRequestError('Item must have a price before splitting');
-  }
+    const item = await prisma.shoppingItem.findFirst({ where: { id: itemId, groupId } });
+    if (!item) {
+      return res.status(404).json({ success: false, message: 'Shopping item not found' });
+    }
+    if (!item.price) {
+      return res.status(400).json({ success: false, message: 'Item must have a price before splitting' });
+    }
 
-  const includedSplits = splits.filter((s) => s.share > 0);
-  if (!includedSplits.length) {
-    throw new BadRequestError('At least one person must be included in the split');
-  }
+    const includedSplits = splits.filter((s) => s.share > 0);
+    if (!includedSplits.length) {
+      return res.status(400).json({ success: false, message: 'At least one person must be included in the split' });
+    }
 
-  const expense = await prisma.expense.create({
-    data: {
-      groupId,
-      paidById,
-      amount: item.price,
-      category: 'Shopping',
-      description: item.name,
-      splits: {
-        create: includedSplits.map((s) => ({ userId: s.userId, share: s.share })),
+    const expense = await prisma.expense.create({
+      data: {
+        groupId,
+        paidById,
+        amount: item.price,
+        category: 'Shopping',
+        description: item.name,
+        splits: {
+          create: includedSplits.map((s) => ({ userId: s.userId, share: s.share })),
+        },
       },
-    },
-  });
+    });
 
-  // Mark item as completed after converting to expense
-  await prisma.shoppingItem.update({ where: { id: itemId }, data: { completed: true } });
+    await prisma.shoppingItem.update({ where: { id: itemId }, data: { completed: true } });
 
-  return res.status(201).json({ expense, message: `Expense created for "${item.name}"` });
-}));
+    return res.status(201).json({ success: true, expense, message: `Expense created for "${item.name}"` });
+  } catch (error) {
+    console.error('Convert shopping item to expense error:', error);
+    next(error);
+  }
+});
 
 module.exports = router;

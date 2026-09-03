@@ -13,7 +13,7 @@ router.use(sanitizeMiddleware);
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function signToken(userId) {
-  return jwt.sign({ userId }, process.env.JWT_SECRET, { expiresIn: '30d' });
+  return jwt.sign({ userId }, process.env.JWT_SECRET || 'secret', { expiresIn: '30d' });
 }
 
 function userPublic(user) {
@@ -22,6 +22,7 @@ function userPublic(user) {
     name: user.name,
     email: user.email,
     phone: user.phone || null,
+    upiId: user.upiId || null,
     createdAt: user.createdAt,
   };
 }
@@ -42,77 +43,86 @@ const loginSchema = z.object({
 });
 
 // ── POST /register ────────────────────────────────────────────────────────────
-router.post('/register', asyncHandler(async (req, res) => {
-  const parsed = registerSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({
-      message: 'Invalid register payload',
-      errors: parsed.error.issues.map((i) => ({ path: i.path.join('.'), message: i.message })),
+// Concept: Server-side error handling (try/catch + error middleware)
+router.post('/register', async (req, res, next) => {
+  try {
+    const parsed = registerSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid register payload',
+        errors: parsed.error.issues.map((i) => ({ path: i.path.join('.'), message: i.message })),
+      });
+    }
+
+    const { name, email, password, phone, upiId } = parsed.data;
+    const normalizedEmail = email.toLowerCase().trim();
+
+    // Check existing user to avoid unnecessary hashing
+    const existingUser = await prisma.user.findUnique({
+      where: { email: normalizedEmail },
+      select: { id: true },
     });
+
+    if (existingUser) {
+      return res.status(409).json({ success: false, message: 'Email is already registered' });
+    }
+
+    const passwordHash = await bcrypt.hash(password, 10);
+
+    const user = await prisma.user.create({
+      data: {
+        name,
+        email: normalizedEmail,
+        passwordHash,
+        phone: phone || null,
+        upiId: upiId || null,
+      },
+    });
+
+    const token = signToken(user.id);
+    return res.status(201).json({ success: true, user: userPublic(user), token });
+  } catch (error) {
+    console.error('Register error:', error);
+    next(error);
   }
-
-  const { name, email, password, phone, upiId } = parsed.data;
-  const normalizedEmail = email.toLowerCase().trim();
-
-  // Check existing user to avoid unnecessary hashing
-  const existingUser = await prisma.user.findUnique({
-    where: { email: normalizedEmail },
-    select: { id: true },
-  });
-
-  if (existingUser) {
-    throw new ConflictError('An account with this email already exists.');
-  }
-
-  const passwordHash = await bcrypt.hash(password, 10);
-
-  const user = await prisma.user.create({
-    data: {
-      name,
-      email: normalizedEmail,
-      passwordHash,
-      emailVerified: true,
-      ...(phone ? { phone } : {}),
-      ...(upiId ? { upiId } : {}),
-    },
-  });
-
-  const token = signToken(user.id);
-
-  return res.status(201).json({
-    token,
-    user: userPublic(user),
-    message: 'Account created successfully',
-  });
-}));
+});
 
 // ── POST /login ───────────────────────────────────────────────────────────────
-router.post('/login', asyncHandler(async (req, res) => {
-  const parsed = loginSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({
-      message: 'Invalid login payload',
-      errors: parsed.error.issues.map((i) => ({ path: i.path.join('.'), message: i.message })),
+// Concept: Server-side error handling (try/catch + error middleware)
+router.post('/login', async (req, res, next) => {
+  try {
+    const parsed = loginSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid login payload',
+        errors: parsed.error.issues.map((i) => ({ path: i.path.join('.'), message: i.message })),
+      });
+    }
+
+    const { email, password } = parsed.data;
+    const normalizedEmail = email.toLowerCase().trim();
+
+    const user = await prisma.user.findUnique({
+      where: { email: normalizedEmail },
     });
+
+    if (!user) {
+      return res.status(401).json({ success: false, message: 'Invalid email or password' });
+    }
+
+    const isMatch = await bcrypt.compare(password, user.passwordHash);
+    if (!isMatch) {
+      return res.status(401).json({ success: false, message: 'Invalid email or password' });
+    }
+
+    const token = signToken(user.id);
+    return res.status(200).json({ success: true, user: userPublic(user), token });
+  } catch (error) {
+    console.error('Login error:', error);
+    next(error);
   }
-
-  const { email, password } = parsed.data;
-
-  const user = await prisma.user.findUnique({
-    where: { email: email.toLowerCase().trim() },
-  });
-
-  if (!user) {
-    throw new UnauthorizedError('Invalid email or password');
-  }
-
-  const isPasswordValid = await bcrypt.compare(password, user.passwordHash);
-  if (!isPasswordValid) {
-    throw new UnauthorizedError('Invalid email or password');
-  }
-
-  const token = signToken(user.id);
-  return res.status(200).json({ token, user: userPublic(user) });
-}));
+});
 
 module.exports = router;

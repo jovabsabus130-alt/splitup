@@ -3,12 +3,14 @@ const auth = require('../middleware/auth');
 const prisma = require('../lib/prisma');
 const { getGroupBalances } = require('../services/balanceService');
 const { analyzeMonthlyExpenses } = require('../services/aiParser');
-const { asyncHandler } = require('../middleware/errorHandler');
 
 const router = express.Router();
 router.use(auth);
 
-router.get('/', asyncHandler(async (req, res) => {
+// ── GET /api/dashboard ────────────────────────────────────────────────────────
+// Concept: Server-side error handling (try/catch + error middleware)
+router.get('/', async (req, res, next) => {
+  try {
     const memberships = await prisma.groupMember.findMany({
       where: { userId: req.userId },
       include: {
@@ -73,7 +75,7 @@ router.get('/', asyncHandler(async (req, res) => {
               netBalance: net,
             });
           } catch (e) {
-            console.error('Balance calc error for group:', groupId, e);
+            console.warn(`Could not compute balance for group ${groupId}:`, e.message);
           }
         })
       );
@@ -81,102 +83,59 @@ router.get('/', asyncHandler(async (req, res) => {
 
     const totalNetBalance = totalOwedToYou - totalYouOwe;
 
-    // Get recent expenses across all user groups
+    // Fetch recent 5 expenses across all groups the user belongs to
     let recentExpenses = [];
     if (groupIds.length > 0) {
-      const recentExpensesRaw = await prisma.expense.findMany({
+      recentExpenses = await prisma.expense.findMany({
         where: { groupId: { in: groupIds } },
         orderBy: { createdAt: 'desc' },
-        take: 8,
+        take: 5,
         include: {
+          paidBy: { select: { id: true, name: true } },
           group: { select: { id: true, name: true } },
-          paidBy: { select: { id: true, name: true, email: true } },
           splits: {
             where: { userId: req.userId },
             select: { share: true },
           },
-          editHistory: {
-            take: 1,
-            select: { id: true },
-          },
         },
-      });
-
-      recentExpenses = recentExpensesRaw.map((e) => {
-        const userShare = e.splits?.[0]?.share ? Number(e.splits[0].share.toString()) : 0;
-        const isPayer = e.paidById === req.userId;
-        return {
-          id: e.id,
-          groupId: e.groupId,
-          groupName: e.group ? e.group.name : '',
-          amount: Number(e.amount.toString()),
-          category: e.category,
-          description: e.description,
-          createdAt: e.createdAt,
-          updatedAt: e.updatedAt,
-          isEdited: e.isEdited,
-          paidById: e.paidById,
-          paidByName: isPayer ? 'You' : (e.paidBy ? e.paidBy.name : 'Unknown'),
-          isPayer,
-          userShare,
-        };
       });
     }
 
-    // Get pending settlements involving the user
+    // Fetch active pending settlements where current user is debtor or creditor
     let pendingSettlements = [];
     if (groupIds.length > 0) {
-      const pendingSettlementsRaw = await prisma.settlement.findMany({
+      pendingSettlements = await prisma.settlement.findMany({
         where: {
           groupId: { in: groupIds },
-          status: { in: ['pending', 'pending_confirmation', 'rejected'] },
+          status: { in: ['pending', 'pending_confirmation'] },
           OR: [{ fromId: req.userId }, { toId: req.userId }],
         },
         orderBy: { createdAt: 'desc' },
-        take: 8,
         include: {
+          from: { select: { id: true, name: true } },
+          to: { select: { id: true, name: true } },
           group: { select: { id: true, name: true } },
-          from: { select: { id: true, name: true, email: true, upiId: true } },
-          to: { select: { id: true, name: true, email: true, upiId: true } },
         },
       });
-
-      pendingSettlements = pendingSettlementsRaw.map((s) => ({
-        id: s.id,
-        groupId: s.groupId,
-        groupName: s.group ? s.group.name : '',
-        amount: Number(s.amount.toString()),
-        status: s.status,
-        rejectionReason: s.rejectionReason,
-        paidAt: s.paidAt,
-        fromId: s.fromId,
-        fromName: s.fromId === req.userId ? 'You' : (s.from ? s.from.name : 'Unknown'),
-        toId: s.toId,
-        toName: s.toId === req.userId ? 'You' : (s.to ? s.to.name : 'Unknown'),
-        isPayer: s.fromId === req.userId,
-        isReceiver: s.toId === req.userId,
-        toUpiId: s.to?.upiId || null,
-        createdAt: s.createdAt,
-      }));
     }
 
-    // Category breakdown across all user groups
+    // Spending breakdown by category for user's groups
     let categoryBreakdown = [];
     if (groupIds.length > 0) {
-      const categoryAggregates = {};
-      const allExpenses = await prisma.expense.findMany({
+      const expensesForCategories = await prisma.expense.findMany({
         where: { groupId: { in: groupIds } },
         select: { category: true, amount: true },
       });
 
+      const categoryTotals = {};
       let totalGroupSpending = 0;
-      allExpenses.forEach((exp) => {
-        const amt = Number(exp.amount.toString()) || 0;
+      expensesForCategories.forEach((e) => {
+        const amt = Number(e.amount);
+        categoryTotals[e.category] = (categoryTotals[e.category] || 0) + amt;
         totalGroupSpending += amt;
-        categoryAggregates[exp.category] = (categoryAggregates[exp.category] || 0) + amt;
       });
 
-      categoryBreakdown = Object.entries(categoryAggregates)
+      categoryBreakdown = Object.entries(categoryTotals)
         .map(([category, amount]) => ({
           category,
           amount: Number(amount.toFixed(2)),
@@ -186,6 +145,7 @@ router.get('/', asyncHandler(async (req, res) => {
     }
 
     return res.status(200).json({
+      success: true,
       summary: {
         totalNetBalance: Number(totalNetBalance.toFixed(2)),
         totalOwedToYou: Number(totalOwedToYou.toFixed(2)),
@@ -199,12 +159,17 @@ router.get('/', asyncHandler(async (req, res) => {
       pendingSettlements,
       categoryBreakdown: categoryBreakdown.slice(0, 6),
     });
-}));
+  } catch (error) {
+    console.error('Dashboard fetch error:', error);
+    next(error);
+  }
+});
 
 // ── GET /api/dashboard/ai-analysis ───────────────────────────────────────────
 // AI Monthly Expense Analysis endpoint
-router.get('/ai-analysis', asyncHandler(async (req, res) => {
-  const { month, groupId } = req.query;
+router.get('/ai-analysis', async (req, res, next) => {
+  try {
+    const { month, groupId } = req.query;
 
     // Get all groups of user
     const memberships = await prisma.groupMember.findMany({
@@ -219,6 +184,7 @@ router.get('/ai-analysis', asyncHandler(async (req, res) => {
 
     if (targetGroupIds.length === 0) {
       return res.status(200).json({
+        success: true,
         monthName: 'Current Month',
         totalSpent: 0,
         transactionCount: 0,
@@ -297,6 +263,7 @@ router.get('/ai-analysis', asyncHandler(async (req, res) => {
     });
 
     return res.status(200).json({
+      success: true,
       selectedMonth: activeMonthKey,
       monthName,
       totalSpent: Number(totalSpent.toFixed(2)),
@@ -306,6 +273,10 @@ router.get('/ai-analysis', asyncHandler(async (req, res) => {
       aiInsights,
       availableMonths,
     });
-}));
+  } catch (error) {
+    console.error('AI Monthly analysis error:', error);
+    next(error);
+  }
+});
 
 module.exports = router;

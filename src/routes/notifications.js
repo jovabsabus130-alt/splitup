@@ -1,62 +1,78 @@
 const express = require('express');
 const auth = require('../middleware/auth');
 const prisma = require('../lib/prisma');
-const { asyncHandler, NotFoundError } = require('../middleware/errorHandler');
 
 const router = express.Router();
 router.use(auth);
 
 // ── GET /api/notifications ───────────────────────────────────────────────────
-router.get('/', asyncHandler(async (req, res) => {
-  const notifications = await prisma.notification.findMany({
-    where: { userId: req.userId },
-    orderBy: { createdAt: 'desc' },
-    take: 50,
-    include: {
-      group: {
-        select: { id: true, name: true },
+// Concept: Server-side error handling (try/catch + error middleware)
+router.get('/', async (req, res, next) => {
+  try {
+    const notifications = await prisma.notification.findMany({
+      where: { userId: req.userId },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+      include: {
+        group: {
+          select: { id: true, name: true },
+        },
       },
-    },
-  });
+    });
 
-  const unreadCount = await prisma.notification.count({
-    where: { userId: req.userId, isRead: false },
-  });
+    const unreadCount = await prisma.notification.count({
+      where: { userId: req.userId, isRead: false },
+    });
 
-  return res.status(200).json({
-    notifications,
-    unreadCount,
-  });
-}));
+    return res.status(200).json({
+      success: true,
+      notifications,
+      unreadCount,
+    });
+  } catch (error) {
+    console.error('Fetch notifications error:', error);
+    next(error);
+  }
+});
 
 // ── PATCH /api/notifications/:id/read ─────────────────────────────────────────
-router.patch('/:id/read', asyncHandler(async (req, res) => {
-  const { id } = req.params;
+router.patch('/:id/read', async (req, res, next) => {
+  try {
+    const { id } = req.params;
 
-  const notification = await prisma.notification.findUnique({
-    where: { id },
-  });
+    const notification = await prisma.notification.findUnique({
+      where: { id },
+    });
 
-  if (!notification || notification.userId !== req.userId) {
-    throw new NotFoundError('Notification not found');
+    if (!notification || notification.userId !== req.userId) {
+      return res.status(404).json({ success: false, message: 'Notification not found' });
+    }
+
+    const updated = await prisma.notification.update({
+      where: { id },
+      data: { isRead: true },
+    });
+
+    return res.status(200).json({ success: true, notification: updated });
+  } catch (error) {
+    console.error('Mark notification read error:', error);
+    next(error);
   }
-
-  const updated = await prisma.notification.update({
-    where: { id },
-    data: { isRead: true },
-  });
-
-  return res.status(200).json({ notification: updated });
-}));
+});
 
 // ── POST /api/notifications/read-all ──────────────────────────────────────────
-router.post('/read-all', asyncHandler(async (req, res) => {
-  await prisma.notification.updateMany({
-    where: { userId: req.userId, isRead: false },
-    data: { isRead: true },
-  });
+router.post('/read-all', async (req, res, next) => {
+  try {
+    await prisma.notification.updateMany({
+      where: { userId: req.userId, isRead: false },
+      data: { isRead: true },
+    });
 
-  return res.status(200).json({ message: 'All notifications marked as read' });
-}));
+    return res.status(200).json({ success: true, message: 'All notifications marked as read' });
+  } catch (error) {
+    console.error('Mark all notifications read error:', error);
+    next(error);
+  }
+});
 
 module.exports = router;

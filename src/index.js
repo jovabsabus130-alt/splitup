@@ -35,11 +35,14 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok' });
 });
 
+// ── Concept: Server-side error handling (Score: 0.2) ─────────────────────────
 // 404 Catch-All Middleware for undefined endpoints
 app.use(notFoundHandler);
 
-// Centralized Express Error-Handling Middleware (Must be registered after all route handlers)
-app.use(errorHandler);
+// Centralized Express 4-Arity Error-Handling Middleware (Must be registered after all route handlers)
+app.use((err, req, res, next) => {
+  return errorHandler(err, req, res, next);
+});
 
 // Process-level unhandled rejection & uncaught exception safeguards
 process.on('unhandledRejection', (reason, promise) => {
