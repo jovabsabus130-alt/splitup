@@ -26,26 +26,61 @@ export default function VerifyEmailPage() {
   }, [countdown]);
 
   function handleOtpChange(index, value) {
-    if (!/^\d*$/.test(value)) return; // digits only
+    const digits = value.replace(/\D/g, '');
+    if (!digits && value !== '') return;
+
     const next = [...otp];
-    next[index] = value.slice(-1); // keep last char
+    if (digits.length > 1) {
+      // Multiple digits entered (or mobile autofill)
+      for (let i = 0; i < digits.length && index + i < 6; i++) {
+        next[index + i] = digits[i];
+      }
+      setOtp(next);
+      const nextIdx = Math.min(5, index + digits.length);
+      inputRefs.current[nextIdx]?.focus();
+      return;
+    }
+
+    next[index] = digits.slice(-1);
     setOtp(next);
-    if (value && index < 5) inputRefs.current[index + 1]?.focus();
+
+    if (digits && index < 5) {
+      inputRefs.current[index + 1]?.focus();
+    }
   }
 
   function handleOtpKeyDown(index, e) {
-    if (e.key === 'Backspace' && !otp[index] && index > 0) {
+    if (e.key === 'Backspace') {
+      if (!otp[index] && index > 0) {
+        const next = [...otp];
+        next[index - 1] = '';
+        setOtp(next);
+        inputRefs.current[index - 1]?.focus();
+      }
+    } else if (e.key === 'ArrowLeft' && index > 0) {
       inputRefs.current[index - 1]?.focus();
+    } else if (e.key === 'ArrowRight' && index < 5) {
+      inputRefs.current[index + 1]?.focus();
     }
   }
 
   function handlePaste(e) {
-    const text = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6);
-    if (text.length === 6) {
-      setOtp(text.split(''));
-      inputRefs.current[5]?.focus();
-    }
     e.preventDefault();
+    const pastedData = (e.clipboardData || window.clipboardData).getData('text');
+    const digits = pastedData.replace(/\D/g, '').slice(0, 6);
+    if (!digits) return;
+
+    const next = [...otp];
+    for (let i = 0; i < 6; i++) {
+      next[i] = digits[i] || '';
+    }
+    setOtp(next);
+
+    if (digits.length === 6) {
+      inputRefs.current[5]?.focus();
+    } else {
+      inputRefs.current[digits.length]?.focus();
+    }
   }
 
   async function handleVerify(e) {

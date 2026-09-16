@@ -84,6 +84,7 @@ async function handleVerifyEmail(req, res, next) {
 
     const { email, otp } = parsed.data;
     const normalizedEmail = email.toLowerCase().trim();
+    const cleanOtp = String(otp).trim();
 
     const user = await prisma.user.findUnique({
       where: { email: normalizedEmail },
@@ -99,13 +100,12 @@ async function handleVerifyEmail(req, res, next) {
       },
     });
 
-    // Do not reveal whether user exists: return uniform error message
     if (!user) {
       return res.status(400).json({ success: false, message: 'Invalid or expired verification code' });
     }
 
     const latestOtp = user.otpCodes[0];
-    if (!latestOtp || latestOtp.code !== otp.trim()) {
+    if (!latestOtp || latestOtp.code !== cleanOtp) {
       return res.status(400).json({ success: false, message: 'Invalid or expired verification code' });
     }
 
@@ -181,14 +181,13 @@ async function handleResendVerification(req, res, next) {
       },
     });
 
-    try {
-      if (process.env.SMTP_USER && process.env.SMTP_PASS) {
-        await sendOtpEmail(normalizedEmail, user.name, code);
-      } else {
-        console.warn('SMTP credentials not configured in .env for resend verification');
-      }
-    } catch (mailErr) {
-      console.error('Failed to send resend verification email:', mailErr.message);
+    console.log(`\n========================================\n🔐 [SPLITUP OTP] Verification Code for ${normalizedEmail}: ${code}\n========================================\n`);
+
+    // Non-blocking email dispatch
+    if (process.env.SMTP_USER && process.env.SMTP_PASS) {
+      sendOtpEmail(normalizedEmail, user.name, code).catch((mailErr) => {
+        console.error('Failed to send resend verification email:', mailErr.message);
+      });
     }
 
     return res.status(200).json(genericSuccessResponse);
@@ -216,25 +215,38 @@ router.post('/register', async (req, res, next) => {
     // Check existing user
     const existingUser = await prisma.user.findUnique({
       where: { email: normalizedEmail },
-      select: { id: true, emailVerified: true },
+      select: { id: true, name: true, emailVerified: true },
     });
 
-    if (existingUser) {
-      return res.status(409).json({ success: false, message: 'Email is already registered' });
-    }
-
+    let user;
     const passwordHash = await bcrypt.hash(password, 10);
 
-    const user = await prisma.user.create({
-      data: {
-        name,
-        email: normalizedEmail,
-        passwordHash,
-        phone: phone || null,
-        upiId: upiId || null,
-        emailVerified: false,
-      },
-    });
+    if (existingUser) {
+      if (existingUser.emailVerified) {
+        return res.status(409).json({ success: false, message: 'This email is already registered and verified. Please sign in.' });
+      }
+      // If user started registration previously but never verified, update details and issue fresh OTP
+      user = await prisma.user.update({
+        where: { id: existingUser.id },
+        data: {
+          name,
+          passwordHash,
+          phone: phone || null,
+          upiId: upiId || null,
+        },
+      });
+    } else {
+      user = await prisma.user.create({
+        data: {
+          name,
+          email: normalizedEmail,
+          passwordHash,
+          phone: phone || null,
+          upiId: upiId || null,
+          emailVerified: false,
+        },
+      });
+    }
 
     // Invalidate any existing unused OTPs
     await prisma.otpCode.updateMany({
@@ -255,26 +267,20 @@ router.post('/register', async (req, res, next) => {
       },
     });
 
-    // Attempt to send OTP verification email
-    let emailSent = false;
-    try {
-      if (process.env.SMTP_USER && process.env.SMTP_PASS) {
-        await sendOtpEmail(normalizedEmail, name, code);
-        emailSent = true;
-      } else {
-        console.warn('SMTP credentials not fully configured in .env; skipping OTP email dispatch.');
-      }
-    } catch (mailErr) {
-      console.error('Failed to send OTP email during register:', mailErr.message);
+    console.log(`\n========================================\n🔐 [SPLITUP OTP] Registration Code for ${normalizedEmail}: ${code}\n========================================\n`);
+
+    // Non-blocking email dispatch
+    if (process.env.SMTP_USER && process.env.SMTP_PASS) {
+      sendOtpEmail(normalizedEmail, name, code).catch((mailErr) => {
+        console.error('Failed to send OTP email during register:', mailErr.message);
+      });
     }
 
     return res.status(201).json({
       success: true,
       requireVerification: true,
       email: normalizedEmail,
-      message: emailSent
-        ? 'Verification code sent to your email.'
-        : 'Account created. Please enter your OTP code to verify.',
+      message: 'Verification code sent to your email. Please enter the 6-digit code to complete registration.',
     });
   } catch (error) {
     console.error('Register error:', error);
@@ -338,14 +344,13 @@ router.post('/forgot-password', async (req, res, next) => {
       },
     });
 
-    try {
-      if (process.env.SMTP_USER && process.env.SMTP_PASS) {
-        await sendPasswordResetOtpEmail(normalizedEmail, user.name, code);
-      } else {
-        console.warn('SMTP credentials not configured in .env for password reset');
-      }
-    } catch (mailErr) {
-      console.error('Failed to send password reset OTP email:', mailErr.message);
+    console.log(`\n========================================\n🔐 [SPLITUP OTP] Password Reset Code for ${normalizedEmail}: ${code}\n========================================\n`);
+
+    // Non-blocking email dispatch
+    if (process.env.SMTP_USER && process.env.SMTP_PASS) {
+      sendPasswordResetOtpEmail(normalizedEmail, user.name, code).catch((mailErr) => {
+        console.error('Failed to send password reset OTP email:', mailErr.message);
+      });
     }
 
     return res.status(200).json(genericSuccessResponse);
