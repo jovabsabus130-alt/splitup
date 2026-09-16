@@ -13,6 +13,8 @@ const shoppingRoutes = require('./routes/shopping');
 const notificationRoutes = require('./routes/notifications');
 const { settlementsRouter } = require('./routes/settlements');
 const dashboardRoutes = require('./routes/dashboard');
+const historyRoutes = require('./routes/history');
+const analyticsRoutes = require('./routes/analytics');
 const { errorHandler, notFoundHandler } = require('./middleware/errorHandler');
 require('./services/cronService'); // Initialize background cron tasks & keep-alive ping
 
@@ -24,6 +26,8 @@ app.use(express.json());
 app.use('/api/auth', authRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/history', historyRoutes);
+app.use('/api/analytics', analyticsRoutes);
 app.use('/api/groups', groupRoutes);
 app.use('/api', expenseRoutes);
 app.use('/api', balanceRoutes);
@@ -60,8 +64,17 @@ async function start() {
     } catch (mongoError) {
       console.warn('MongoDB unavailable, continuing without Mongo features:', mongoError.message);
     }
-    app.listen(PORT, () => {
+    const server = app.listen(PORT, () => {
       console.log(`SplitUp API running on port http://localhost:${PORT}`);
+    });
+
+    server.on('error', (error) => {
+      if (error.code === 'EADDRINUSE') {
+        console.error(`[Server Error] Port ${PORT} is already in use. Please terminate any process holding port ${PORT} or configure a different PORT in .env.`);
+      } else {
+        console.error('[Server Error] Failed to start HTTP server:', error.message);
+      }
+      process.exit(1);
     });
   } catch (error) {
     console.error('Failed to start API', error);

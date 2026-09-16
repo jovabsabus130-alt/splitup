@@ -5,7 +5,9 @@ import EditExpenseModal from '../components/EditExpenseModal';
 import ExpenseHistoryModal from '../components/ExpenseHistoryModal';
 import ShareModal from '../components/ShareModal';
 import ShoppingListSection from '../components/ShoppingListSection';
+import TransactionConcernModal from '../components/TransactionConcernModal';
 import api from '../lib/api';
+import { calculateSharesByMode, parseFraction, validateSplitMode } from '../lib/splitCalculations';
 
 export default function GroupDetailPage() {
   const { groupId } = useParams();
@@ -14,13 +16,17 @@ export default function GroupDetailPage() {
   const [parseText, setParseText] = useState('');
   const [parseResult, setParseResult] = useState(null);
   const [isParsing, setIsParsing] = useState(false);
-  const [isCustomSplit, setIsCustomSplit] = useState(false);
+  const [splitMode, setSplitMode] = useState('equal'); // 'equal' | 'custom' | 'percentage' | 'fraction' | 'count'
+  const [customAmounts, setCustomAmounts] = useState({});
+  const [percentages, setPercentages] = useState({});
+  const [fractions, setFractions] = useState({});
+  const [counts, setCounts] = useState({});
+  const [memberShares, setMemberShares] = useState({});
+  const [excludedMembers, setExcludedMembers] = useState({});
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [form, setForm] = useState({ amount: '', category: 'Food', description: '' });
   const [paidById, setPaidById] = useState('');
-  const [memberShares, setMemberShares] = useState({});
-  const [excludedMembers, setExcludedMembers] = useState({});
   const [showShare, setShowShare] = useState(false);
   const [joinRequests, setJoinRequests] = useState([]);
   const [currentUserId, setCurrentUserId] = useState(null);
@@ -31,6 +37,7 @@ export default function GroupDetailPage() {
   const [lastAddedExpense, setLastAddedExpense] = useState(null);
   const [editingExpense, setEditingExpense] = useState(null);
   const [historyExpense, setHistoryExpense] = useState(null);
+  const [concernExpense, setConcernExpense] = useState(null);
   const navigate = useNavigate();
 
   const members = useMemo(() => group?.members?.map((m) => m.user) || [], [group]);
@@ -88,62 +95,101 @@ export default function GroupDetailPage() {
     }
   }, [members, currentUserId, paidById]);
 
-  // Helper: Distribute total cents equally, letting the buyer (payer) absorb any remainder cents (e.g. ₹0.01)
-  function computeEvenSplits(amountVal, memberList, excludedMap, payerId) {
-    const included = memberList.filter((m) => !excludedMap[m.id]);
-    if (!included.length || !amountVal || Number(amountVal) <= 0) {
-      const empty = {};
-      for (const m of memberList) empty[m.id] = '0.00';
-      return empty;
-    }
-    const totalCents = Math.round(Number(amountVal) * 100);
-    const count = included.length;
-    const baseCents = Math.floor(totalCents / count);
-    const remainderCents = totalCents - baseCents * count;
-
-    // The buyer absorbs remainder cents if included in the split, otherwise the first included member
-    const absorbsId = included.some((m) => m.id === payerId) ? payerId : included[0]?.id;
-
-    const next = {};
-    for (const m of memberList) {
-      if (excludedMap[m.id]) {
-        next[m.id] = '0.00';
-      } else {
-        const centsForMember = baseCents + (m.id === absorbsId ? remainderCents : 0);
-        next[m.id] = (centsForMember / 100).toFixed(2);
-      }
-    }
-    return next;
-  }
-
   // Calculate current user's live impact on this expense
   const effectivePayerId = paidById || currentUserId || members[0]?.id;
 
-  // Recompute even split across included members only when not in custom split mode
+  // Switch between split modes smoothly without data corruption
+  function handleSwitchSplitMode(newMode) {
+    setSplitMode(newMode);
+    const included = members.filter((m) => !excludedMembers[m.id]);
+    const incCount = included.length || 1;
+
+    if (newMode === 'equal') {
+      // Auto-calculated
+    } else if (newMode === 'percentage') {
+      const initPercent = (100 / incCount).toFixed(1);
+      const newP = {};
+      members.forEach((m) => {
+        newP[m.id] = excludedMembers[m.id] ? '0' : initPercent;
+      });
+      setPercentages(newP);
+    } else if (newMode === 'fraction') {
+      const newF = {};
+      members.forEach((m) => {
+        newF[m.id] = excludedMembers[m.id] ? '0' : `1/${incCount}`;
+      });
+      setFractions(newF);
+    } else if (newMode === 'count') {
+      const newC = {};
+      members.forEach((m) => {
+        newC[m.id] = excludedMembers[m.id] ? '0' : '1';
+      });
+      setCounts(newC);
+    } else if (newMode === 'custom') {
+      const newCustom = {};
+      members.forEach((m) => {
+        newCustom[m.id] = memberShares[m.id] || '0.00';
+      });
+      setCustomAmounts(newCustom);
+    }
+  }
+
+  // Live recalculate memberShares based on active split mode & weights
   useEffect(() => {
-    if (!members.length || isCustomSplit) return;
-    setMemberShares(computeEvenSplits(form.amount, members, excludedMembers, effectivePayerId));
-  }, [members.length, form.amount, excludedMembers, isCustomSplit, effectivePayerId]);
+    if (!members.length) return;
+    const computed = calculateSharesByMode({
+      splitMode,
+      totalAmount: form.amount,
+      members,
+      excludedMembers,
+      customAmounts,
+      percentages,
+      fractions,
+      counts,
+      payerId: effectivePayerId,
+    });
+    setMemberShares(computed);
+  }, [
+    splitMode,
+    form.amount,
+    members,
+    excludedMembers,
+    customAmounts,
+    percentages,
+    fractions,
+    counts,
+    effectivePayerId,
+  ]);
 
-  // Live remaining amount with precision tolerance
+  const splitValidation = useMemo(() => {
+    return validateSplitMode({
+      splitMode,
+      totalAmount: form.amount,
+      members,
+      excludedMembers,
+      calculatedShares: memberShares,
+      customAmounts,
+      percentages,
+      fractions,
+      counts,
+    });
+  }, [
+    splitMode,
+    form.amount,
+    members,
+    excludedMembers,
+    memberShares,
+    customAmounts,
+    percentages,
+    fractions,
+    counts,
+  ]);
+
   const totalAmount = Number(form.amount) || 0;
-  const allocatedAmount = Object.entries(memberShares).reduce((sum, [id, share]) => {
-    return excludedMembers[id] ? sum : sum + (Number(share) || 0);
-  }, 0);
-  const rawDiff = totalAmount - allocatedAmount;
-  const remainingAmount = Math.abs(rawDiff) < 0.005 ? 0 : Number(rawDiff.toFixed(2));
-  const isSplitBalanced = Math.abs(remainingAmount) <= 0.01;
-  const isSplitOver = remainingAmount < -0.01;
-
   const currentUserIsPayer = effectivePayerId === currentUserId;
   const currentUserPaid = currentUserIsPayer ? totalAmount : 0;
   const currentUserShare = (currentUserId && !excludedMembers[currentUserId]) ? (Number(memberShares[currentUserId]) || 0) : 0;
   const currentUserNet = currentUserPaid - currentUserShare;
-
-  function resetToEvenSplit() {
-    setIsCustomSplit(false);
-    setMemberShares(computeEvenSplits(form.amount, members, excludedMembers, effectivePayerId));
-  }
 
   async function parseWithAI() {
     if (!parseText.trim()) return;
@@ -154,7 +200,7 @@ export default function GroupDetailPage() {
       const { data } = await api.post(`/api/groups/${groupId}/expenses/parse`, { text: parseText });
       const p = data.parsed;
       setParseResult(p);
-      setIsCustomSplit(true);
+      setSplitMode('custom');
 
       // Fill top-level form fields
       setForm((prev) => ({
@@ -166,7 +212,7 @@ export default function GroupDetailPage() {
 
       // Auto-match AI labels to real member names, pre-fill shares + exclusions
       if (p.splitSuggestion && members.length) {
-        const newShares = {};
+        const newCustom = {};
         const newExcluded = {};
 
         for (const member of members) {
@@ -182,15 +228,15 @@ export default function GroupDetailPage() {
           });
 
           if (match) {
-            newShares[member.id] = Number(match.share).toFixed(2);
+            newCustom[member.id] = Number(match.share).toFixed(2);
             if (match.excluded || match.share === 0) newExcluded[member.id] = true;
           } else {
-            newShares[member.id] = '0.00';
+            newCustom[member.id] = '0.00';
             newExcluded[member.id] = true;
           }
         }
 
-        setMemberShares(newShares);
+        setCustomAmounts(newCustom);
         setExcludedMembers(newExcluded);
       }
 
@@ -221,6 +267,10 @@ export default function GroupDetailPage() {
 
   async function addExpense(event) {
     event.preventDefault();
+    if (!splitValidation.isValid) {
+      setError(splitValidation.message || 'Invalid split allocation');
+      return;
+    }
     setError('');
     setMessage('');
     try {
@@ -263,8 +313,13 @@ export default function GroupDetailPage() {
         userNet: currentUserNet,
       });
 
-      setForm({ amount: '', category: '', description: '' });
+      setForm({ amount: '', category: 'Food', description: '' });
       setExcludedMembers({});
+      setCustomAmounts({});
+      setPercentages({});
+      setFractions({});
+      setCounts({});
+      setSplitMode('equal');
       setParseResult(null);
       setParseText('');
       setMessage('Expense added successfully!');
@@ -332,6 +387,23 @@ export default function GroupDetailPage() {
     <>
       <header className="page-header">
         <div>
+          <Link
+            to="/"
+            className="btn-ghost"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '4px 8px',
+              fontSize: '13px',
+              color: 'var(--text-secondary)',
+              marginBottom: 'var(--space-2)',
+              textDecoration: 'none',
+              borderRadius: 'var(--radius-sm)',
+            }}
+          >
+            ← Back to Groups
+          </Link>
           <h1>{group?.name || 'Group Details'}</h1>
           <p>{members.length} {members.length === 1 ? 'member' : 'members'} &bull; {expenses.length} {expenses.length === 1 ? 'expense' : 'expenses'} logged</p>
         </div>
@@ -342,6 +414,13 @@ export default function GroupDetailPage() {
             className="btn-primary"
           >
             Balances & Settle
+          </Link>
+          <Link
+            to={`/analytics?scope=group&groupId=${groupId}`}
+            id="group-analytics-btn"
+            className="btn-secondary"
+          >
+            Analytics
           </Link>
           <button
             id="share-btn"
@@ -558,44 +637,94 @@ export default function GroupDetailPage() {
                 />
               </div>
 
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 'var(--space-2)' }}>
-                <span style={{ fontWeight: 600, fontSize: '13px', color: 'var(--text-primary)' }}>Splits & Individual Shares</span>
-                {isCustomSplit && (
+              {/* ── Selectable Split Modes ── */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+                <label style={{ display: 'block', fontWeight: 500, fontSize: '13px' }}>
+                  Split Mode
+                </label>
+                <div className="split-mode-selector-grid">
                   <button
                     type="button"
-                    className="btn-secondary"
-                    style={{ height: '28px', fontSize: '12px', padding: '0 8px' }}
-                    onClick={resetToEvenSplit}
+                    className={`split-mode-btn ${splitMode === 'equal' ? 'active' : ''}`}
+                    onClick={() => handleSwitchSplitMode('equal')}
                   >
-                    Reset to Equal Split
+                    <span className="split-mode-badge">=</span>
+                    <span>Equal</span>
                   </button>
-                )}
+                  <button
+                    type="button"
+                    className={`split-mode-btn ${splitMode === 'custom' ? 'active' : ''}`}
+                    onClick={() => handleSwitchSplitMode('custom')}
+                  >
+                    <span className="split-mode-badge">₹</span>
+                    <span>Custom</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={`split-mode-btn ${splitMode === 'percentage' ? 'active' : ''}`}
+                    onClick={() => handleSwitchSplitMode('percentage')}
+                  >
+                    <span className="split-mode-badge">%</span>
+                    <span>Percentage</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={`split-mode-btn ${splitMode === 'fraction' ? 'active' : ''}`}
+                    onClick={() => handleSwitchSplitMode('fraction')}
+                  >
+                    <span className="split-mode-badge">½</span>
+                    <span>Fraction</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={`split-mode-btn ${splitMode === 'count' ? 'active' : ''}`}
+                    onClick={() => handleSwitchSplitMode('count')}
+                  >
+                    <span className="split-mode-badge">×</span>
+                    <span>Count</span>
+                  </button>
+                </div>
               </div>
 
-              {/* ── Remaining amount indicator ── */}
+              {/* ── Live Validation & Helper Indicator ── */}
               {totalAmount > 0 && (
                 <div
-                  className={`remaining-indicator${
-                    isSplitOver
-                      ? ' remaining-over'
-                      : isSplitBalanced
-                      ? ' remaining-done'
-                      : ''
-                  }`}
+                  className={`remaining-indicator ${splitValidation.isValid ? 'remaining-done' : 'remaining-over'}`}
                 >
-                  <span>Remaining to split:</span>
-                  <strong style={{ fontVariantNumeric: 'tabular-nums' }}>₹{isSplitBalanced ? '0.00' : remainingAmount.toFixed(2)}</strong>
-                  {isSplitOver && (
-                    <span style={{ color: 'var(--danger)', marginLeft: 'auto' }}>Splits exceed total</span>
-                  )}
-                  {isSplitBalanced && (
-                    <span style={{ marginLeft: 'auto', color: 'var(--success)' }}>
-                      Balanced
-                    </span>
-                  )}
+                  <span>
+                    {splitMode === 'percentage' && (
+                      <>
+                        Total: <strong>{members.filter((m) => !excludedMembers[m.id]).reduce((s, m) => s + (parseFloat(percentages[m.id]) || 0), 0).toFixed(1)}%</strong> / 100%
+                      </>
+                    )}
+                    {splitMode === 'fraction' && (
+                      <>
+                        Total: <strong>{members.filter((m) => !excludedMembers[m.id]).reduce((s, m) => s + parseFraction(fractions[m.id]), 0).toFixed(2)}</strong> / 1.0
+                      </>
+                    )}
+                    {splitMode === 'count' && (
+                      <>
+                        Total: <strong>{members.filter((m) => !excludedMembers[m.id]).reduce((s, m) => s + (parseFloat(counts[m.id]) || 0), 0)}</strong> Shares &bull; Live: ₹{(totalAmount / Math.max(1, members.filter((m) => !excludedMembers[m.id]).reduce((s, m) => s + (parseFloat(counts[m.id]) || 0), 0))).toFixed(2)}/unit
+                      </>
+                    )}
+                    {splitMode === 'custom' && (
+                      <>
+                        Total: <strong>₹{members.filter((m) => !excludedMembers[m.id]).reduce((s, m) => s + (parseFloat(customAmounts[m.id]) || 0), 0).toFixed(2)}</strong> / ₹{totalAmount.toFixed(2)}
+                      </>
+                    )}
+                    {splitMode === 'equal' && (
+                      <>
+                        Split equally among <strong>{members.filter((m) => !excludedMembers[m.id]).length}</strong> members &bull; ₹{(totalAmount / Math.max(1, members.filter((m) => !excludedMembers[m.id]).length)).toFixed(2)} each
+                      </>
+                    )}
+                  </span>
+                  <span style={{ marginLeft: 'auto', fontWeight: 600 }}>
+                    {splitValidation.isValid ? '✓ Balanced' : `⚠ ${splitValidation.message}`}
+                  </span>
                 </div>
               )}
 
+              {/* ── Member Splits List ── */}
               <div className="splits-table-container">
                 {members.map((member) => {
                   const isExcluded = !!excludedMembers[member.id];
@@ -634,6 +763,7 @@ export default function GroupDetailPage() {
                       </label>
 
                       <div className="split-right-section">
+                        {/* Live Net Impact Badge */}
                         <div className="split-impact-tag">
                           {totalAmount > 0 && !isExcluded ? (
                             netForPerson > 0 ? (
@@ -654,23 +784,131 @@ export default function GroupDetailPage() {
                           ) : null}
                         </div>
 
+                        {/* Mode-Specific Input Field & Live Share Preview */}
                         <div className="split-share-wrap">
-                          <span style={{ color: 'var(--text-muted)', fontSize: '13px' }}>₹</span>
-                          <input
-                            type="number"
-                            step="0.01"
-                            className="split-share-input"
-                            value={isExcluded ? '' : (memberShares[member.id] || '0')}
-                            disabled={isExcluded}
-                            placeholder={isExcluded ? '0.00' : ''}
-                            onChange={(event) => {
-                              setIsCustomSplit(true);
-                              setMemberShares((prev) => ({
-                                ...prev,
-                                [member.id]: event.target.value,
-                              }));
-                            }}
-                          />
+                          {splitMode === 'equal' && (
+                            <span style={{ fontSize: '13px', fontWeight: 600, fontVariantNumeric: 'tabular-nums', color: isExcluded ? 'var(--text-muted)' : 'var(--text-primary)' }}>
+                              ₹{isExcluded ? '0.00' : (memberShares[member.id] || '0.00')}
+                            </span>
+                          )}
+
+                          {splitMode === 'custom' && (
+                            <>
+                              <span style={{ color: 'var(--text-muted)', fontSize: '13px' }}>₹</span>
+                              <input
+                                type="number"
+                                step="0.01"
+                                className="split-share-input"
+                                value={isExcluded ? '' : (customAmounts[member.id] ?? memberShares[member.id] ?? '')}
+                                disabled={isExcluded}
+                                placeholder={isExcluded ? '0.00' : '0.00'}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setCustomAmounts((prev) => ({ ...prev, [member.id]: val }));
+                                }}
+                              />
+                            </>
+                          )}
+
+                          {splitMode === 'percentage' && (
+                            <>
+                              <input
+                                type="number"
+                                step="0.1"
+                                min="0"
+                                max="100"
+                                className="split-share-input"
+                                style={{ width: '65px' }}
+                                value={isExcluded ? '' : (percentages[member.id] ?? '')}
+                                disabled={isExcluded}
+                                placeholder="0"
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setPercentages((prev) => ({ ...prev, [member.id]: val }));
+                                }}
+                              />
+                              <span style={{ color: 'var(--text-muted)', fontSize: '12px' }}>%</span>
+                              {!isExcluded && (
+                                <span style={{ fontSize: '12px', color: 'var(--text-secondary)', fontVariantNumeric: 'tabular-nums', minWidth: '60px', textAlign: 'right' }}>
+                                  (₹{memberShares[member.id] || '0.00'})
+                                </span>
+                              )}
+                            </>
+                          )}
+
+                          {splitMode === 'fraction' && (
+                            <>
+                              <input
+                                type="text"
+                                className="split-share-input"
+                                style={{ width: '65px', textAlign: 'center' }}
+                                value={isExcluded ? '' : (fractions[member.id] ?? '')}
+                                disabled={isExcluded}
+                                placeholder="1/N"
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setFractions((prev) => ({ ...prev, [member.id]: val }));
+                                }}
+                              />
+                              {!isExcluded && (
+                                <span style={{ fontSize: '12px', color: 'var(--text-secondary)', fontVariantNumeric: 'tabular-nums', minWidth: '60px', textAlign: 'right' }}>
+                                  (₹{memberShares[member.id] || '0.00'})
+                                </span>
+                              )}
+                            </>
+                          )}
+
+                          {splitMode === 'count' && (
+                            <div className="count-stepper-wrap">
+                              <button
+                                type="button"
+                                className="count-step-btn"
+                                disabled={isExcluded || Number(counts[member.id] ?? 1) <= 0}
+                                onClick={() => {
+                                  const current = Math.max(0, parseInt(counts[member.id] ?? '1', 10) || 0);
+                                  const nextVal = Math.max(0, current - 1);
+                                  setCounts((prev) => ({ ...prev, [member.id]: String(nextVal) }));
+                                }}
+                                aria-label="Decrease count"
+                                title="Decrease count"
+                              >
+                                −
+                              </button>
+                              <input
+                                type="number"
+                                step="1"
+                                min="0"
+                                className="split-share-input count-stepper-input"
+                                value={isExcluded ? '' : (counts[member.id] ?? '1')}
+                                disabled={isExcluded}
+                                placeholder="1"
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setCounts((prev) => ({ ...prev, [member.id]: val }));
+                                }}
+                              />
+                              <button
+                                type="button"
+                                className="count-step-btn"
+                                disabled={isExcluded}
+                                onClick={() => {
+                                  const current = Math.max(0, parseInt(counts[member.id] ?? '1', 10) || 0);
+                                  const nextVal = current + 1;
+                                  setCounts((prev) => ({ ...prev, [member.id]: String(nextVal) }));
+                                }}
+                                aria-label="Increase count"
+                                title="Increase count"
+                              >
+                                +
+                              </button>
+                              <span style={{ color: 'var(--text-muted)', fontSize: '11.5px', marginLeft: '2px' }}>shares</span>
+                              {!isExcluded && (
+                                <span style={{ fontSize: '12px', color: 'var(--text-secondary)', fontVariantNumeric: 'tabular-nums', minWidth: '60px', textAlign: 'right' }}>
+                                  (₹{memberShares[member.id] || '0.00'})
+                                </span>
+                              )}
+                            </div>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -700,7 +938,7 @@ export default function GroupDetailPage() {
               )}
 
               <div style={{ display: 'flex', gap: 'var(--space-2)', marginTop: 'var(--space-2)' }}>
-                <button type="submit" className="btn-primary" disabled={!isSplitBalanced || totalAmount <= 0}>
+                <button type="submit" className="btn-primary" disabled={!splitValidation.isValid || totalAmount <= 0}>
                   Add Expense
                 </button>
                 <Link to={`/groups/${groupId}/balances`} className="btn-secondary">
@@ -748,6 +986,8 @@ export default function GroupDetailPage() {
                       const isPayer = expense.paidBy?.id === currentUserId || expense.paidById === currentUserId;
                       const mySplit = expense.splits?.find((s) => s.userId === currentUserId || s.user?.id === currentUserId);
                       const isEdited = expense.isEdited || (expense.editHistory && expense.editHistory.length > 0);
+                      const hasConcerns = expense.concerns && expense.concerns.length > 0;
+                      const hasPendingConcern = hasConcerns && expense.concerns.some((c) => c.status === 'pending');
                       const formattedDate = expense.createdAt
                         ? new Date(expense.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
                         : '';
@@ -775,6 +1015,24 @@ export default function GroupDetailPage() {
                                   title="Click to view edit history"
                                 >
                                   Edited 📝
+                                </button>
+                              )}
+                              {hasConcerns && (
+                                <button
+                                  type="button"
+                                  className="admin-pill"
+                                  style={{
+                                    fontSize: '10.5px',
+                                    padding: '1px 6px',
+                                    background: hasPendingConcern ? 'var(--warning-bg)' : 'var(--success-bg)',
+                                    color: hasPendingConcern ? 'var(--warning-text)' : 'var(--success-text)',
+                                    borderColor: hasPendingConcern ? 'var(--warning-border)' : 'var(--success-border)',
+                                    cursor: 'pointer',
+                                  }}
+                                  onClick={() => setConcernExpense(expense)}
+                                  title="Click to view transaction concerns & flags"
+                                >
+                                  🚩 {hasPendingConcern ? `${expense.concerns.filter((c) => c.status === 'pending').length} Flagged` : 'Resolved'}
                                 </button>
                               )}
                             </div>
@@ -808,26 +1066,42 @@ export default function GroupDetailPage() {
                           </td>
                           <td style={{ textAlign: 'right' }}>
                             <div style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end', alignItems: 'center' }}>
-                              <button
-                                type="button"
-                                className="btn-secondary"
-                                style={{ height: '26px', fontSize: '11.5px', padding: '0 8px' }}
-                                onClick={() => setEditingExpense(expense)}
-                                title="Edit this transaction"
-                              >
-                                Edit
-                              </button>
-                              {isEdited && (
+                              {!isEdited ? (
+                                <button
+                                  type="button"
+                                  className="btn-secondary"
+                                  style={{ height: '26px', fontSize: '11.5px', padding: '0 8px' }}
+                                  onClick={() => setEditingExpense(expense)}
+                                  title="Edit this transaction"
+                                >
+                                  Edit
+                                </button>
+                              ) : (
                                 <button
                                   type="button"
                                   className="btn-ghost"
-                                  style={{ height: '26px', fontSize: '11.5px', padding: '0 6px' }}
+                                  style={{ height: '26px', fontSize: '11.5px', padding: '0 8px', color: 'var(--accent-primary)', borderColor: 'var(--border-subtle)', background: 'var(--bg-subtle)' }}
                                   onClick={() => setHistoryExpense(expense)}
-                                  title="View change history"
+                                  title="This transaction has already been edited (locked). Click to view previous values and change audit log."
                                 >
-                                  History
+                                  📜 History
                                 </button>
                               )}
+                              <button
+                                type="button"
+                                className="btn-ghost"
+                                style={{
+                                  height: '26px',
+                                  fontSize: '11.5px',
+                                  padding: '0 8px',
+                                  color: hasPendingConcern ? 'var(--warning-text)' : 'var(--text-secondary)',
+                                  borderColor: hasPendingConcern ? 'var(--warning-border)' : 'var(--border-subtle)',
+                                }}
+                                onClick={() => setConcernExpense(expense)}
+                                title="Flag / Raise a concern or view responses"
+                              >
+                                🚩 {hasConcerns ? `(${expense.concerns.length})` : 'Flag'}
+                              </button>
                             </div>
                           </td>
                         </tr>
@@ -1054,6 +1328,19 @@ export default function GroupDetailPage() {
             groupId={groupId}
             expense={historyExpense}
             onClose={() => setHistoryExpense(null)}
+          />
+        )}
+
+        {/* ── Transaction Concern / Flag Modal ── */}
+        {concernExpense && (
+          <TransactionConcernModal
+            groupId={groupId}
+            expense={concernExpense}
+            currentUserId={currentUserId}
+            onClose={() => setConcernExpense(null)}
+            onConcernUpdated={() => {
+              loadGroupData();
+            }}
           />
         )}
     </>

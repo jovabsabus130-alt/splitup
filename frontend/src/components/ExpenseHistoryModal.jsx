@@ -91,6 +91,7 @@ export default function ExpenseHistoryModal({ groupId, expense, onClose }) {
 
               const editorName = record.editedBy?.name || 'Group Member';
               const changes = Array.isArray(record.changes) ? record.changes : [];
+              const previousData = record.previousData;
 
               return (
                 <div
@@ -125,6 +126,7 @@ export default function ExpenseHistoryModal({ groupId, expense, onClose }) {
                     </span>
                   </div>
 
+                  {/* Changes Diff Section */}
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                     {changes.length === 0 ? (
                       <span style={{ fontSize: '12.5px', color: 'var(--text-secondary)' }}>
@@ -160,6 +162,47 @@ export default function ExpenseHistoryModal({ groupId, expense, onClose }) {
                       ))
                     )}
                   </div>
+
+                  {/* Previous State Snapshot Section */}
+                  {previousData && (
+                    <div
+                      style={{
+                        marginTop: 'var(--space-3)',
+                        paddingTop: 'var(--space-3)',
+                        borderTop: '1px dashed var(--border-subtle)',
+                        fontSize: '12px',
+                        color: 'var(--text-secondary)',
+                      }}
+                    >
+                      <div style={{ fontWeight: 600, marginBottom: '4px', color: 'var(--text-muted)', textTransform: 'uppercase', fontSize: '10.5px', letterSpacing: '0.04em' }}>
+                        Previous Transaction Snapshot
+                      </div>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', marginBottom: '6px' }}>
+                        <span>Amount: <strong>₹{Number(previousData.amount || 0).toFixed(2)}</strong></span>
+                        <span>Category: <strong>{previousData.category || 'N/A'}</strong></span>
+                        {previousData.description && <span>Description: <em>{previousData.description}</em></span>}
+                      </div>
+                      {Array.isArray(previousData.splits) && previousData.splits.length > 0 && (
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '4px' }}>
+                          <span style={{ color: 'var(--text-muted)' }}>Original Splits:</span>
+                          {previousData.splits.map((s, sIdx) => (
+                            <span
+                              key={sIdx}
+                              style={{
+                                background: 'var(--bg-subtle)',
+                                padding: '1px 6px',
+                                borderRadius: '4px',
+                                border: '1px solid var(--border-subtle)',
+                                fontVariantNumeric: 'tabular-nums',
+                              }}
+                            >
+                              {s.userName || 'Member'}: ₹{Number(s.share || 0).toFixed(2)}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               );
             })}

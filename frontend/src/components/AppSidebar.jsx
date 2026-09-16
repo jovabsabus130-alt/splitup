@@ -2,7 +2,13 @@ import { useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import api from '../lib/api';
 
-export default function AppSidebar({ mobileOpen, onCloseMobile, onGroupCreated }) {
+export default function AppSidebar({
+  mobileOpen,
+  onCloseMobile,
+  onGroupCreated,
+  unreadNotifications = 0,
+  onOpenNotifications,
+}) {
   const navigate = useNavigate();
   const location = useLocation();
   const params = useParams();
@@ -88,7 +94,8 @@ export default function AppSidebar({ mobileOpen, onCloseMobile, onGroupCreated }
     navigate('/login');
   }
 
-  const isDashboardActive = location.pathname === '/dashboard';
+  const isDashboardActive = location.pathname === '/dashboard' || location.pathname === '/';
+  const isHistoryActive = location.pathname === '/history';
 
   return (
     <>
@@ -123,8 +130,45 @@ export default function AppSidebar({ mobileOpen, onCloseMobile, onGroupCreated }
               className={`sidebar-nav-item${isDashboardActive ? ' active' : ''}`}
               onClick={onCloseMobile}
             >
+              <span className="sidebar-nav-icon">📊</span>
               <span>Dashboard</span>
             </Link>
+
+            <Link
+              to="/analytics"
+              className={`sidebar-nav-item${location.pathname === '/analytics' ? ' active' : ''}`}
+              onClick={onCloseMobile}
+            >
+              <span className="sidebar-nav-icon">📈</span>
+              <span>Analytics</span>
+            </Link>
+
+            <Link
+              to="/history"
+              className={`sidebar-nav-item${isHistoryActive ? ' active' : ''}`}
+              onClick={onCloseMobile}
+            >
+              <span className="sidebar-nav-icon">🕒</span>
+              <span>History</span>
+            </Link>
+
+            <button
+              type="button"
+              className="sidebar-nav-item sidebar-notif-item"
+              onClick={() => {
+                if (onCloseMobile) onCloseMobile();
+                if (onOpenNotifications) onOpenNotifications();
+              }}
+              style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer' }}
+            >
+              <span className="sidebar-nav-icon">🔔</span>
+              <span style={{ flex: 1 }}>Notifications</span>
+              {unreadNotifications > 0 && (
+                <span className="nav-unread-badge">
+                  {unreadNotifications > 99 ? '99+' : unreadNotifications}
+                </span>
+              )}
+            </button>
           </div>
 
           <div className="sidebar-section-header">

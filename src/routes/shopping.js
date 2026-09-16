@@ -21,16 +21,21 @@ async function assertMember(userId, groupId) {
 const addItemSchema = z.object({
   name: z.string().trim().min(1, 'Item name is required'),
   price: z.number().positive('Price must be a positive number').optional(),
+  quantity: z.coerce.number().int().positive('Quantity must be a positive integer').optional().default(1),
+  category: z.string().trim().min(1).optional().default('Shopping'),
 });
 
 const updateItemSchema = z.object({
   name: z.string().trim().min(1).optional(),
   price: z.number().positive().optional().nullable(),
+  quantity: z.coerce.number().int().positive('Quantity must be a positive integer').optional(),
+  category: z.string().trim().min(1).optional(),
   completed: z.boolean().optional(),
 });
 
 const splitItemSchema = z.object({
   paidById: z.string().min(1, 'Payer ID is required'),
+  category: z.string().trim().min(1).optional(),
   splits: z.array(
     z.object({
       userId: z.string().min(1, 'User ID is required'),
@@ -83,6 +88,8 @@ router.post('/', async (req, res, next) => {
         groupId,
         addedById: req.userId,
         name: parsed.data.name,
+        quantity: parsed.data.quantity ?? 1,
+        category: parsed.data.category || 'Shopping',
         ...(parsed.data.price != null ? { price: parsed.data.price } : {}),
       },
       include: { addedBy: { select: { id: true, name: true } } },
@@ -120,6 +127,8 @@ router.patch('/:itemId', async (req, res, next) => {
     const data = {};
     if (parsed.data.name !== undefined) data.name = parsed.data.name;
     if (parsed.data.completed !== undefined) data.completed = parsed.data.completed;
+    if (parsed.data.quantity !== undefined) data.quantity = parsed.data.quantity;
+    if (parsed.data.category !== undefined) data.category = parsed.data.category;
     if ('price' in parsed.data) {
       data.price = parsed.data.price;
     }
@@ -181,6 +190,12 @@ router.post('/:itemId/expense', async (req, res, next) => {
     if (!item) {
       return res.status(404).json({ success: false, message: 'Shopping item not found' });
     }
+    if (item.completed) {
+      return res.status(409).json({
+        success: false,
+        message: 'This shopping item has already been converted to an expense or marked completed',
+      });
+    }
     if (!item.price) {
       return res.status(400).json({ success: false, message: 'Item must have a price before splitting' });
     }
@@ -190,12 +205,40 @@ router.post('/:itemId/expense', async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'At least one person must be included in the split' });
     }
 
+    // Verify payer and all participants belong to group
+    const participantIds = Array.from(new Set([paidById, ...includedSplits.map((s) => s.userId)]));
+    const validMembers = await prisma.groupMember.findMany({
+      where: {
+        groupId,
+        userId: { in: participantIds },
+      },
+      select: { userId: true },
+    });
+
+    if (validMembers.length !== participantIds.length) {
+      return res.status(400).json({
+        success: false,
+        message: 'All split participants and payer must be members of the group',
+      });
+    }
+
+    // Verify split sum matches item price
+    const splitTotal = includedSplits.reduce((sum, s) => sum + s.share, 0);
+    if (Math.abs(splitTotal - Number(item.price)) > 0.01) {
+      return res.status(400).json({
+        success: false,
+        message: 'Splits must sum to the shopping item price',
+      });
+    }
+
+    const expenseCategory = parsed.data.category || item.category || 'Shopping';
+
     const expense = await prisma.expense.create({
       data: {
         groupId,
         paidById,
         amount: item.price,
-        category: 'Shopping',
+        category: expenseCategory,
         description: item.name,
         splits: {
           create: includedSplits.map((s) => ({ userId: s.userId, share: s.share })),

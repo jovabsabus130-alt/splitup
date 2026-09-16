@@ -95,8 +95,14 @@ export default function EditExpenseModal({ groupId, expense, members, currentUse
   const isSplitBalanced = Math.abs(remainingAmount) <= 0.01 && totalAmountNum > 0;
   const isSplitOver = remainingAmount < -0.01;
 
+  const isAlreadyEdited = Boolean(expense.isEdited || (expense.editHistory && expense.editHistory.length > 0));
+
   async function handleSubmit(e) {
     e.preventDefault();
+    if (isAlreadyEdited) {
+      setError('This transaction has already been edited and cannot be modified again.');
+      return;
+    }
     if (!isSplitBalanced) return;
     setSaving(true);
     setError('');
@@ -160,12 +166,43 @@ export default function EditExpenseModal({ groupId, expense, members, currentUse
 
         <div className="card-header" style={{ borderBottom: '1px solid var(--border-subtle)', paddingBottom: 'var(--space-3)' }}>
           <div>
-            <h2 id="edit-modal-title" className="card-title">Edit Transaction</h2>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <h2 id="edit-modal-title" className="card-title">Edit Transaction</h2>
+              {isAlreadyEdited && (
+                <span className="admin-pill" style={{ background: 'var(--warning-bg)', color: 'var(--warning-text)', borderColor: 'var(--warning-border)' }}>
+                  Locked (Already Edited)
+                </span>
+              )}
+            </div>
             <div className="card-subtitle">
-              Changes will be recorded in the transaction edit history log
+              {isAlreadyEdited
+                ? 'This transaction was already edited previously and cannot be modified again.'
+                : 'Changes will be recorded in the transaction edit history audit log'}
             </div>
           </div>
         </div>
+
+        {isAlreadyEdited && (
+          <div
+            style={{
+              marginTop: 'var(--space-3)',
+              padding: '10px 14px',
+              borderRadius: 'var(--radius-md)',
+              background: 'var(--warning-bg)',
+              color: 'var(--warning-text)',
+              border: '1px solid var(--warning-border)',
+              fontSize: '13px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+            }}
+          >
+            <span>🔒</span>
+            <span>
+              <strong>Single-Edit Policy:</strong> This transaction has already been modified once. Further edits are disabled to maintain ledger integrity.
+            </span>
+          </div>
+        )}
 
         {error && <div className="error-text" style={{ marginTop: 'var(--space-3)' }}>{error}</div>}
 
@@ -333,9 +370,9 @@ export default function EditExpenseModal({ groupId, expense, members, currentUse
             <button
               type="submit"
               className="btn-primary"
-              disabled={saving || !isSplitBalanced || totalAmountNum <= 0}
+              disabled={saving || isAlreadyEdited || !isSplitBalanced || totalAmountNum <= 0}
             >
-              {saving ? 'Saving Changes…' : 'Save Changes'}
+              {saving ? 'Saving Changes…' : isAlreadyEdited ? 'Locked (Edited)' : 'Save Changes'}
             </button>
           </div>
         </form>

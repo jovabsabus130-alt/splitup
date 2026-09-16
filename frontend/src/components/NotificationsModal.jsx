@@ -1,7 +1,39 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 
+function getNotificationIcon(type) {
+  switch (type) {
+    case 'payment_confirmation_request':
+      return '💳';
+    case 'payment_confirmed':
+      return '✅';
+    case 'payment_rejected':
+      return '❌';
+    case 'group_invitation':
+    case 'group_member_added':
+      return '👥';
+    case 'join_request':
+      return '🚪';
+    case 'join_request_approved':
+      return '🎉';
+    case 'join_request_denied':
+      return '🚫';
+    case 'expense_created':
+      return '💰';
+    case 'expense_edited':
+      return '📝';
+    case 'concern_raised':
+      return '🚩';
+    case 'concern_responded':
+      return '💬';
+    default:
+      return '🔔';
+  }
+}
+
 export default function NotificationsModal({ isOpen, onClose, onActionTaken }) {
+  const navigate = useNavigate();
   const [notifications, setNotifications] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -28,7 +60,30 @@ export default function NotificationsModal({ isOpen, onClose, onActionTaken }) {
     try {
       await api.post('/api/notifications/read-all');
       setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
+      if (onActionTaken) onActionTaken();
     } catch {}
+  }
+
+  async function handleMarkSingleRead(notifId) {
+    try {
+      await api.patch(`/api/notifications/${notifId}/read`);
+      setNotifications((prev) =>
+        prev.map((n) => (n.id === notifId ? { ...n, isRead: true } : n))
+      );
+      if (onActionTaken) onActionTaken();
+    } catch {}
+  }
+
+  async function handleNotificationClick(notification) {
+    if (!notification.isRead) {
+      await handleMarkSingleRead(notification.id);
+    }
+
+    const targetGroupId = notification.groupId || notification.data?.groupId;
+    if (targetGroupId) {
+      onClose();
+      navigate(`/groups/${targetGroupId}`);
+    }
   }
 
   async function handleConfirmPayment(notification) {
@@ -88,7 +143,7 @@ export default function NotificationsModal({ isOpen, onClose, onActionTaken }) {
       aria-modal="true"
       aria-labelledby="notifications-modal-title"
     >
-      <div className="modal-box" style={{ maxWidth: '540px', maxHeight: '88vh', overflowY: 'auto' }}>
+      <div className="modal-box" style={{ maxWidth: '560px', maxHeight: '88vh', overflowY: 'auto' }}>
         <button
           className="modal-close"
           onClick={onClose}
@@ -101,7 +156,7 @@ export default function NotificationsModal({ isOpen, onClose, onActionTaken }) {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', paddingRight: '24px' }}>
             <div>
               <h2 id="notifications-modal-title" className="card-title">Notifications</h2>
-              <div className="card-subtitle">Payment confirmation requests & activity alerts</div>
+              <div className="card-subtitle">Activity alerts, group updates & financial requests</div>
             </div>
             {notifications.some((n) => !n.isRead) && (
               <button
@@ -140,9 +195,9 @@ export default function NotificationsModal({ isOpen, onClose, onActionTaken }) {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)', marginTop: 'var(--space-4)' }}>
             {notifications.map((notif) => {
               const isPaymentRequest = notif.type === 'payment_confirmation_request';
-              const isConfirmed = notif.type === 'payment_confirmed' || notif.actionTaken === 'confirmed';
-              const isRejected = notif.type === 'payment_rejected' || notif.actionTaken === 'rejected';
               const isPendingAction = isPaymentRequest && !notif.actionTaken;
+              const hasGroup = Boolean(notif.groupId || notif.data?.groupId);
+              const icon = getNotificationIcon(notif.type);
 
               const dateStr = new Date(notif.createdAt).toLocaleString(undefined, {
                 month: 'short',
@@ -163,16 +218,35 @@ export default function NotificationsModal({ isOpen, onClose, onActionTaken }) {
                     flexDirection: 'column',
                     gap: 'var(--space-2)',
                     boxShadow: notif.isRead ? 'none' : 'var(--shadow-xs)',
+                    cursor: hasGroup && !isPendingAction ? 'pointer' : 'default',
+                    transition: 'background 0.15s ease',
+                  }}
+                  onClick={() => {
+                    if (hasGroup && !isPendingAction) {
+                      handleNotificationClick(notif);
+                    }
                   }}
                 >
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                       <span style={{ fontSize: '16px' }}>
-                        {isPaymentRequest ? '💳' : isConfirmed ? '✅' : isRejected ? '❌' : '🔔'}
+                        {icon}
                       </span>
                       <strong style={{ fontSize: '13.5px', color: 'var(--text-primary)' }}>
                         {notif.title}
                       </strong>
+                      {!notif.isRead && (
+                        <span
+                          style={{
+                            width: '7px',
+                            height: '7px',
+                            borderRadius: '50%',
+                            backgroundColor: 'var(--accent-primary)',
+                            display: 'inline-block',
+                          }}
+                          title="Unread"
+                        />
+                      )}
                     </div>
                     <span style={{ fontSize: '11.5px', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
                       {dateStr}
@@ -191,7 +265,10 @@ export default function NotificationsModal({ isOpen, onClose, onActionTaken }) {
                         id={`reject-notif-btn-${notif.id}`}
                         className="btn-danger"
                         style={{ height: '30px', fontSize: '12px', padding: '0 12px' }}
-                        onClick={() => handleRejectPayment(notif)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleRejectPayment(notif);
+                        }}
                         disabled={!!actionLoading[notif.id]}
                       >
                         {actionLoading[notif.id] === 'rejecting' ? 'Rejecting…' : 'Reject Payment'}
@@ -201,7 +278,10 @@ export default function NotificationsModal({ isOpen, onClose, onActionTaken }) {
                         id={`confirm-notif-btn-${notif.id}`}
                         className="btn-primary"
                         style={{ height: '30px', fontSize: '12px', padding: '0 14px', backgroundColor: 'var(--success)', borderColor: 'var(--success)' }}
-                        onClick={() => handleConfirmPayment(notif)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleConfirmPayment(notif);
+                        }}
                         disabled={!!actionLoading[notif.id]}
                       >
                         {actionLoading[notif.id] === 'confirming' ? 'Confirming…' : 'Confirm as Paid'}
@@ -212,6 +292,15 @@ export default function NotificationsModal({ isOpen, onClose, onActionTaken }) {
                   {notif.actionTaken && (
                     <div style={{ fontSize: '12px', fontWeight: 600, color: notif.actionTaken === 'confirmed' ? 'var(--success)' : 'var(--danger)', marginTop: '2px' }}>
                       {notif.actionTaken === 'confirmed' ? '✓ You confirmed this payment' : '✕ You rejected this payment'}
+                    </div>
+                  )}
+
+                  {/* ── Quick Jump Link ── */}
+                  {hasGroup && !isPendingAction && (
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '2px' }}>
+                      <span style={{ fontSize: '11.5px', color: 'var(--accent-primary)', fontWeight: 500 }}>
+                        Open Group ➔
+                      </span>
                     </div>
                   )}
                 </div>

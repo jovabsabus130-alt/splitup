@@ -1,30 +1,31 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import AIExpenseAnalysisModal from '../components/AIExpenseAnalysisModal';
-import NotificationsModal from '../components/NotificationsModal';
+import { useNavigation } from '../lib/NavigationContext';
 import api from '../lib/api';
 
 export default function DashboardPage() {
   const navigate = useNavigate();
+  const { openNotifications, unreadNotifications } = useNavigation();
+  const [summary, setSummary] = useState(null);
   const [groups, setGroups] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const [showOverviewModal, setShowOverviewModal] = useState(false);
-  const [showNotificationsModal, setShowNotificationsModal] = useState(false);
   const [showAIAnalysisModal, setShowAIAnalysisModal] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newGroupName, setNewGroupName] = useState('');
   const [creating, setCreating] = useState(false);
-  const [unreadNotifications, setUnreadNotifications] = useState(0);
 
   async function loadDashboardData() {
     try {
-      const [groupsRes, notifsRes] = await Promise.all([
-        api.get('/api/groups'),
+      const [dashRes, notifsRes] = await Promise.all([
+        api.get('/api/dashboard'),
         api.get('/api/notifications').catch(() => ({ data: { unreadCount: 0 } })),
       ]);
-      setGroups(groupsRes.data.groups || []);
+      setSummary(dashRes.data.summary || null);
+      setGroups(dashRes.data.groups || []);
       setUnreadNotifications(notifsRes.data.unreadCount || 0);
     } catch (apiError) {
       setError(apiError.response?.data?.message || 'Failed to load dashboard data');
@@ -82,6 +83,10 @@ export default function DashboardPage() {
 
   const totalBadgesCount = allPendingRequests.length + unreadNotifications;
 
+  const totalOwedToYou = Number(summary?.totalOwedToYou || 0);
+  const totalYouOwe = Number(summary?.totalYouOwe || 0);
+  const netBalance = totalOwedToYou - totalYouOwe;
+
   return (
     <>
       {/* ── Page Header ── */}
@@ -113,7 +118,7 @@ export default function DashboardPage() {
           <button
             type="button"
             className="dashboard-bell-btn"
-            onClick={() => setShowNotificationsModal(true)}
+            onClick={openNotifications}
             title={totalBadgesCount > 0 ? `${totalBadgesCount} pending notifications & requests` : 'Notifications'}
             aria-label="Notifications & Pending Requests"
           >
@@ -133,6 +138,177 @@ export default function DashboardPage() {
 
       {error ? <div className="error-text">{error}</div> : null}
       {message ? <div className="success-text">{message}</div> : null}
+
+      {/* ── Top Summary Cards ── */}
+      {loading ? (
+        <div className="dashboard-summary-grid">
+          <div className="card" style={{ padding: 'var(--space-5)', minHeight: '130px', justifyContent: 'center' }}>
+            <div style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>Loading monthly expenses…</div>
+          </div>
+          <div className="card" style={{ padding: 'var(--space-5)', minHeight: '130px', justifyContent: 'center' }}>
+            <div style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>Loading net balance…</div>
+          </div>
+        </div>
+      ) : (
+        <div className="dashboard-summary-grid">
+          {/* ── Card 1: My Monthly Expense ── */}
+          <div
+            className="card"
+            style={{
+              padding: 'var(--space-5)',
+              position: 'relative',
+              gap: 'var(--space-3)',
+              margin: 0,
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+                <span style={{ fontSize: '18px' }}>💳</span>
+                <h3 style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)', margin: 0 }}>
+                  My Monthly Expense
+                </h3>
+              </div>
+              <span
+                style={{
+                  fontSize: '11px',
+                  fontWeight: 600,
+                  padding: '2px 8px',
+                  borderRadius: 'var(--radius-full)',
+                  backgroundColor: 'var(--bg-subtle)',
+                  color: 'var(--text-secondary)',
+                  border: '1px solid var(--border-subtle)',
+                }}
+              >
+                {summary?.currentMonthName || 'Current Month'}
+              </span>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 'var(--space-2)' }}>
+              <span
+                style={{
+                  fontSize: '28px',
+                  fontWeight: 800,
+                  letterSpacing: '-0.02em',
+                  color: 'var(--text-primary)',
+                  fontFamily: 'system-ui, -apple-system, sans-serif',
+                }}
+              >
+                ₹{Number(summary?.myMonthlyExpense || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </span>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 'auto', paddingTop: 'var(--space-2)' }}>
+              <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                {Number(summary?.myMonthlyExpense || 0) > 0 ? 'Your personal share across groups' : 'No expenses logged'}
+              </span>
+              <button
+                type="button"
+                className="btn-secondary"
+                id="view-analytics-btn"
+                onClick={() => navigate('/analytics')}
+                style={{
+                  height: '28px',
+                  fontSize: '12px',
+                  padding: '0 10px',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                }}
+              >
+                <span>📊</span>
+                <span>Analytics</span>
+              </button>
+            </div>
+          </div>
+
+          {/* ── Card 2: Combined Net Balance (Leftover / Position) ── */}
+          <div
+            className="card"
+            style={{
+              padding: 'var(--space-5)',
+              position: 'relative',
+              gap: 'var(--space-3)',
+              margin: 0,
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+                <span style={{ fontSize: '18px' }}>⚖️</span>
+                <h3 style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)', margin: 0 }}>
+                  Net Balance
+                </h3>
+              </div>
+              <span
+                style={{
+                  fontSize: '11px',
+                  fontWeight: 600,
+                  padding: '2px 8px',
+                  borderRadius: 'var(--radius-full)',
+                  backgroundColor:
+                    netBalance > 0
+                      ? 'var(--success-bg)'
+                      : netBalance < 0
+                      ? 'var(--danger-bg)'
+                      : 'var(--bg-subtle)',
+                  color:
+                    netBalance > 0
+                      ? 'var(--success-text)'
+                      : netBalance < 0
+                      ? 'var(--danger-text)'
+                      : 'var(--text-muted)',
+                  border: `1px solid ${
+                    netBalance > 0
+                      ? 'var(--success-border)'
+                      : netBalance < 0
+                      ? 'var(--danger-border)'
+                      : 'var(--border-subtle)'
+                  }`,
+                }}
+              >
+                {netBalance > 0 ? 'Net Receivable' : netBalance < 0 ? 'Net Payable' : 'Settled Up'}
+              </span>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 'var(--space-2)' }}>
+              <span
+                style={{
+                  fontSize: '28px',
+                  fontWeight: 800,
+                  letterSpacing: '-0.02em',
+                  color:
+                    netBalance > 0
+                      ? 'var(--success)'
+                      : netBalance < 0
+                      ? 'var(--danger)'
+                      : 'var(--text-primary)',
+                  fontFamily: 'system-ui, -apple-system, sans-serif',
+                }}
+              >
+                {netBalance > 0 ? '+' : netBalance < 0 ? '-' : ''}₹{Math.abs(netBalance).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </span>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 'auto', paddingTop: 'var(--space-2)', flexWrap: 'wrap', gap: '8px' }}>
+              <div style={{ display: 'flex', gap: '8px', fontSize: '12px' }}>
+                <span style={{ color: 'var(--text-secondary)' }}>
+                  Owed: <strong style={{ color: 'var(--success)' }}>+₹{totalOwedToYou.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</strong>
+                </span>
+                <span style={{ color: 'var(--border-hover)' }}>•</span>
+                <span style={{ color: 'var(--text-secondary)' }}>
+                  Owe: <strong style={{ color: 'var(--danger)' }}>-₹{totalYouOwe.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</strong>
+                </span>
+              </div>
+              <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                {netBalance > 0
+                  ? 'Net amount to receive'
+                  : netBalance < 0
+                  ? 'Net amount to pay'
+                  : 'All balances settled'}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Direct Groups View ── */}
       {loading ? (
@@ -291,13 +467,6 @@ export default function DashboardPage() {
           </div>
         </div>
       )}
-
-      {/* ── Notifications Modal ── */}
-      <NotificationsModal
-        isOpen={showNotificationsModal}
-        onClose={() => setShowNotificationsModal(false)}
-        onActionTaken={loadDashboardData}
-      />
 
       {/* ── AI Monthly Expense Analysis Modal ── */}
       {showAIAnalysisModal && (

@@ -28,6 +28,7 @@ model User {
   shoppingItems        ShoppingItem[]
   notifications        Notification[]
   expenseEdits         ExpenseEditHistory[]
+  concerns             TransactionConcern[]
 }
 
 model Group {
@@ -79,6 +80,7 @@ model Expense {
   createdAt   DateTime             @default(now())
   updatedAt   DateTime             @default(now()) @updatedAt
   editHistory ExpenseEditHistory[]
+  concerns    TransactionConcern[]
 
   group  Group          @relation(fields: [groupId], references: [id], onDelete: Cascade)
   paidBy User           @relation("ExpensePaidBy", fields: [paidById], references: [id], onDelete: Restrict)
@@ -107,6 +109,20 @@ model ExpenseEditHistory {
 
   expense  Expense @relation(fields: [expenseId], references: [id], onDelete: Cascade)
   editedBy User    @relation(fields: [editedById], references: [id], onDelete: Cascade)
+}
+
+model TransactionConcern {
+  id            String    @id @default(cuid())
+  expenseId     String
+  raisedById    String
+  reason        String
+  status        String    @default("pending") // pending | resolved | dismissed
+  payerResponse String?
+  resolvedAt    DateTime?
+  createdAt     DateTime  @default(now())
+
+  expense  Expense @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+  raisedBy User    @relation(fields: [raisedById], references: [id], onDelete: Cascade)
 }
 
 model Settlement {
@@ -161,6 +177,8 @@ model ShoppingItem {
   addedById String
   name      String
   price     Decimal? @db.Decimal(12, 2)
+  quantity  Int      @default(1)
+  category  String?  @default("Shopping")
   completed Boolean  @default(false)
   createdAt DateTime @default(now())
 

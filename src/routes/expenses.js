@@ -3,7 +3,7 @@ const { z } = require('zod');
 
 const auth = require('../middleware/auth');
 const prisma = require('../lib/prisma');
-const { asyncHandler, BadRequestError, ForbiddenError, NotFoundError } = require('../middleware/errorHandler');
+const { asyncHandler, BadRequestError, ForbiddenError, NotFoundError, ConflictError } = require('../middleware/errorHandler');
 
 const router = express.Router();
 const EPSILON = 0.01;
@@ -123,6 +123,46 @@ router.post('/groups/:groupId/expenses', async (req, res, next) => {
       return created;
     });
 
+    // Notify group members (excluding creator)
+    const [groupInfo, creatorUser, groupMembers] = await Promise.all([
+      prisma.group.findUnique({ where: { id: groupId }, select: { name: true } }),
+      prisma.user.findUnique({ where: { id: req.userId }, select: { name: true } }),
+      prisma.groupMember.findMany({ where: { groupId }, select: { userId: true } }),
+    ]);
+
+    const recipientIds = Array.from(
+      new Set(groupMembers.map((m) => m.userId))
+    ).filter((uid) => uid !== req.userId);
+
+    if (recipientIds.length > 0) {
+      const expenseTitle = description || category;
+      const amountStr = expenseAmount.toFixed(2);
+      const creatorName = creatorUser?.name || 'A group member';
+      const groupName = groupInfo?.name || 'Group';
+
+      await prisma.notification.createMany({
+        data: recipientIds.map((uid) => {
+          const userSplit = splits.find((s) => s.userId === uid);
+          const shareText = userSplit ? ` Your share: ₹${Number(userSplit.share).toFixed(2)}.` : '';
+          return {
+            userId: uid,
+            groupId,
+            type: 'expense_created',
+            title: 'New Expense Added',
+            message: `${creatorName} added "${expenseTitle}" (₹${amountStr}) in ${groupName}.${shareText}`,
+            data: {
+              expenseId: expense.id,
+              groupId,
+              groupName,
+              amount: expenseAmount,
+              category,
+              description,
+            },
+          };
+        }),
+      });
+    }
+
     const fullExpense = await prisma.expense.findUnique({
       where: { id: expense.id },
       include: {
@@ -202,6 +242,14 @@ router.get('/groups/:groupId/expenses', async (req, res, next) => {
             },
           },
         },
+        concerns: {
+          orderBy: { createdAt: 'desc' },
+          include: {
+            raisedBy: {
+              select: { id: true, name: true, email: true },
+            },
+          },
+        },
       },
     });
 
@@ -213,7 +261,7 @@ router.get('/groups/:groupId/expenses', async (req, res, next) => {
 });
 
 // ── PUT /groups/:groupId/expenses/:expenseId ──────────────────────────────────
-// Edit an existing transaction and record change history
+// Edit an existing transaction once, record change history and previous state, and lock from future edits
 router.put('/groups/:groupId/expenses/:expenseId', async (req, res, next) => {
   try {
     const { groupId, expenseId } = req.params;
@@ -262,6 +310,14 @@ router.put('/groups/:groupId/expenses/:expenseId', async (req, res, next) => {
 
     if (!existing || existing.groupId !== groupId) {
       return res.status(404).json({ success: false, message: 'Expense not found' });
+    }
+
+    // Strictly enforce single-edit rule
+    if (existing.isEdited) {
+      return res.status(409).json({
+        success: false,
+        message: 'This transaction has already been edited and cannot be modified again.',
+      });
     }
 
     const newPayerId = paidById || existing.paidById;
@@ -359,43 +415,74 @@ router.put('/groups/:groupId/expenses/:expenseId', async (req, res, next) => {
       });
     }
 
-    // Atomic update transaction
-    await prisma.$transaction(async (tx) => {
-      const updated = await tx.expense.update({
-        where: { id: expenseId },
-        data: {
-          amount: newAmount,
-          category,
-          description: description || null,
-          paidById: newPayerId,
-          ...(createdAt ? { createdAt: new Date(createdAt) } : {}),
-        },
-      });
+    // Preserve previous transaction state snapshot
+    const previousData = {
+      amount: Number(existing.amount),
+      category: existing.category,
+      description: existing.description || null,
+      paidById: existing.paidById,
+      createdAt: existing.createdAt,
+      splits: existing.splits.map((s) => ({
+        userId: s.userId,
+        share: Number(s.share),
+        userName: s.user?.name || null,
+      })),
+    };
 
-      await tx.expenseSplit.deleteMany({
-        where: { expenseId },
-      });
+    // Concurrency-safe atomic update transaction
+    try {
+      await prisma.$transaction(async (tx) => {
+        // Atomic conditional update ensuring isEdited is still false
+        const updateResult = await tx.expense.updateMany({
+          where: {
+            id: expenseId,
+            groupId,
+            isEdited: false,
+          },
+          data: {
+            amount: newAmount,
+            category,
+            description: description || null,
+            paidById: newPayerId,
+            isEdited: true,
+            ...(createdAt ? { createdAt: new Date(createdAt) } : {}),
+          },
+        });
 
-      await tx.expenseSplit.createMany({
-        data: splits.map((s) => ({
-          expenseId,
-          userId: s.userId,
-          share: Number(s.share),
-        })),
-      });
+        if (updateResult.count === 0) {
+          throw new ConflictError('This transaction has already been edited and cannot be modified again.');
+        }
 
-      if (changes.length > 0) {
+        await tx.expenseSplit.deleteMany({
+          where: { expenseId },
+        });
+
+        await tx.expenseSplit.createMany({
+          data: splits.map((s) => ({
+            expenseId,
+            userId: s.userId,
+            share: Number(s.share),
+          })),
+        });
+
         await tx.expenseEditHistory.create({
           data: {
             expenseId,
             editedById: req.userId,
-            changes,
+            previousData,
+            changes: changes.length > 0 ? changes : [{ field: 'Details', from: 'Original', to: 'Updated' }],
           },
         });
+      });
+    } catch (txError) {
+      if (txError instanceof ConflictError || txError.statusCode === 409 || txError.status === 409) {
+        return res.status(409).json({
+          success: false,
+          message: txError.message || 'This transaction has already been edited and cannot be modified again.',
+        });
       }
-
-      return updated;
-    });
+      throw txError;
+    }
 
     const finalExpense = await prisma.expense.findUnique({
       where: { id: expenseId },
@@ -415,6 +502,42 @@ router.put('/groups/:groupId/expenses/:expenseId', async (req, res, next) => {
       },
     });
 
+    // Notify group members (excluding editor)
+    const [groupInfo, editorUser, groupMembers] = await Promise.all([
+      prisma.group.findUnique({ where: { id: groupId }, select: { name: true } }),
+      prisma.user.findUnique({ where: { id: req.userId }, select: { name: true } }),
+      prisma.groupMember.findMany({ where: { groupId }, select: { userId: true } }),
+    ]);
+
+    const recipientIds = Array.from(
+      new Set(groupMembers.map((m) => m.userId))
+    ).filter((uid) => uid !== req.userId);
+
+    if (recipientIds.length > 0) {
+      const expenseTitle = description || category;
+      const amountStr = newAmount.toFixed(2);
+      const editorName = editorUser?.name || 'A group member';
+      const groupName = groupInfo?.name || 'Group';
+
+      await prisma.notification.createMany({
+        data: recipientIds.map((uid) => ({
+          userId: uid,
+          groupId,
+          type: 'expense_edited',
+          title: 'Expense Updated',
+          message: `${editorName} updated "${expenseTitle}" (₹${amountStr}) in ${groupName}.`,
+          data: {
+            expenseId,
+            groupId,
+            groupName,
+            amount: newAmount,
+            category,
+            description,
+          },
+        })),
+      });
+    }
+
     return res.status(200).json({
       success: true,
       expense: finalExpense,
@@ -425,6 +548,15 @@ router.put('/groups/:groupId/expenses/:expenseId', async (req, res, next) => {
     console.error('Update expense error:', error);
     next(error);
   }
+});
+
+const createConcernSchema = z.object({
+  reason: z.string().trim().min(1, 'Reason is required'),
+});
+
+const respondConcernSchema = z.object({
+  payerResponse: z.string().trim().min(1, 'Response is required'),
+  status: z.enum(['resolved', 'dismissed', 'pending']).optional().default('resolved'),
 });
 
 // ── GET /groups/:groupId/expenses/:expenseId/history ─────────────────────────
@@ -445,6 +577,15 @@ router.get('/groups/:groupId/expenses/:expenseId/history', async (req, res, next
       return res.status(403).json({ success: false, message: 'You are not a member of this group' });
     }
 
+    const expense = await prisma.expense.findUnique({
+      where: { id: expenseId },
+      select: { id: true, groupId: true },
+    });
+
+    if (!expense || expense.groupId !== groupId) {
+      return res.status(404).json({ success: false, message: 'Expense not found in this group' });
+    }
+
     const history = await prisma.expenseEditHistory.findMany({
       where: { expenseId },
       orderBy: { createdAt: 'desc' },
@@ -458,6 +599,267 @@ router.get('/groups/:groupId/expenses/:expenseId/history', async (req, res, next
     return res.status(200).json({ success: true, history });
   } catch (error) {
     console.error('Fetch history error:', error);
+    next(error);
+  }
+});
+
+// ── POST /groups/:groupId/expenses/:expenseId/concerns ────────────────────────
+// Raise a concern/flag against a specific transaction and notify the payer
+router.post('/groups/:groupId/expenses/:expenseId/concerns', async (req, res, next) => {
+  try {
+    const { groupId, expenseId } = req.params;
+    const parsed = createConcernSchema.safeParse(req.body);
+
+    if (!parsed.success) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid concern payload',
+        errors: parsed.error.issues,
+      });
+    }
+
+    // 1. Verify authenticated user belongs to group
+    const membership = await prisma.groupMember.findUnique({
+      where: {
+        userId_groupId: {
+          userId: req.userId,
+          groupId,
+        },
+      },
+    });
+
+    if (!membership) {
+      return res.status(403).json({ success: false, message: 'You are not a member of this group' });
+    }
+
+    // 2. Verify expense exists and belongs to group
+    const expense = await prisma.expense.findUnique({
+      where: { id: expenseId },
+      include: {
+        group: { select: { id: true, name: true } },
+        paidBy: { select: { id: true, name: true, email: true } },
+      },
+    });
+
+    if (!expense || expense.groupId !== groupId) {
+      return res.status(404).json({ success: false, message: 'Expense not found in this group' });
+    }
+
+    // 3. Create concern
+    const concern = await prisma.transactionConcern.create({
+      data: {
+        expenseId,
+        raisedById: req.userId,
+        reason: parsed.data.reason,
+        status: 'pending',
+      },
+      include: {
+        raisedBy: {
+          select: { id: true, name: true, email: true },
+        },
+      },
+    });
+
+    // 4. Notify the expense payer
+    const raiserUser = await prisma.user.findUnique({
+      where: { id: req.userId },
+      select: { id: true, name: true },
+    });
+
+    const raiserName = raiserUser?.name || 'A group member';
+    const groupName = expense.group?.name || 'Group';
+    const expenseDesc = expense.description || expense.category;
+    const amountFormatted = Number(expense.amount).toFixed(2);
+
+    await prisma.notification.create({
+      data: {
+        userId: expense.paidById,
+        groupId,
+        type: 'concern_raised',
+        title: 'Transaction Concern Raised',
+        message: `${raiserName} raised a concern regarding "${expenseDesc}" (₹${amountFormatted}) in ${groupName}: "${parsed.data.reason}"`,
+        data: {
+          concernId: concern.id,
+          expenseId,
+          groupId,
+          raisedById: req.userId,
+          reason: parsed.data.reason,
+        },
+      },
+    });
+
+    return res.status(201).json({
+      success: true,
+      concern,
+      message: 'Concern raised successfully and payer notified.',
+    });
+  } catch (error) {
+    console.error('Create concern error:', error);
+    next(error);
+  }
+});
+
+// ── GET /groups/:groupId/expenses/:expenseId/concerns ─────────────────────────
+// Retrieve all concerns/flags for a specific transaction
+router.get('/groups/:groupId/expenses/:expenseId/concerns', async (req, res, next) => {
+  try {
+    const { groupId, expenseId } = req.params;
+
+    // 1. Verify authenticated user belongs to group
+    const membership = await prisma.groupMember.findUnique({
+      where: {
+        userId_groupId: {
+          userId: req.userId,
+          groupId,
+        },
+      },
+    });
+
+    if (!membership) {
+      return res.status(403).json({ success: false, message: 'You are not a member of this group' });
+    }
+
+    // 2. Verify expense exists and belongs to group
+    const expense = await prisma.expense.findUnique({
+      where: { id: expenseId },
+      select: { id: true, groupId: true },
+    });
+
+    if (!expense || expense.groupId !== groupId) {
+      return res.status(404).json({ success: false, message: 'Expense not found in this group' });
+    }
+
+    // 3. Fetch concerns for this expense
+    const concerns = await prisma.transactionConcern.findMany({
+      where: { expenseId },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        raisedBy: {
+          select: { id: true, name: true, email: true },
+        },
+      },
+    });
+
+    return res.status(200).json({ success: true, concerns });
+  } catch (error) {
+    console.error('Fetch concerns error:', error);
+    next(error);
+  }
+});
+
+// ── PATCH /groups/:groupId/expenses/:expenseId/concerns/:concernId/respond ────
+// Only the payer of the expense can respond to and resolve/dismiss concerns
+router.patch('/groups/:groupId/expenses/:expenseId/concerns/:concernId/respond', async (req, res, next) => {
+  try {
+    const { groupId, expenseId, concernId } = req.params;
+    const parsed = respondConcernSchema.safeParse(req.body);
+
+    if (!parsed.success) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid response payload',
+        errors: parsed.error.issues,
+      });
+    }
+
+    // 1. Verify authenticated user belongs to group
+    const membership = await prisma.groupMember.findUnique({
+      where: {
+        userId_groupId: {
+          userId: req.userId,
+          groupId,
+        },
+      },
+    });
+
+    if (!membership) {
+      return res.status(403).json({ success: false, message: 'You are not a member of this group' });
+    }
+
+    // 2. Verify expense exists and belongs to group
+    const expense = await prisma.expense.findUnique({
+      where: { id: expenseId },
+      include: {
+        group: { select: { id: true, name: true } },
+        paidBy: { select: { id: true, name: true } },
+      },
+    });
+
+    if (!expense || expense.groupId !== groupId) {
+      return res.status(404).json({ success: false, message: 'Expense not found in this group' });
+    }
+
+    // 3. Verify concern exists and belongs to this expense
+    const concern = await prisma.transactionConcern.findUnique({
+      where: { id: concernId },
+      include: {
+        raisedBy: { select: { id: true, name: true, email: true } },
+      },
+    });
+
+    if (!concern || concern.expenseId !== expenseId) {
+      return res.status(404).json({ success: false, message: 'Concern not found for this expense' });
+    }
+
+    // 4. Strictly verify that authenticated user is the payer of the expense
+    if (expense.paidById !== req.userId) {
+      return res.status(403).json({
+        success: false,
+        message: 'Only the payer of the expense can respond to concerns',
+      });
+    }
+
+    // 5. Update concern status, response, and resolved timestamp
+    const resolvedAt = new Date();
+    const updatedConcern = await prisma.transactionConcern.update({
+      where: { id: concernId },
+      data: {
+        payerResponse: parsed.data.payerResponse,
+        status: parsed.data.status || 'resolved',
+        resolvedAt,
+      },
+      include: {
+        raisedBy: {
+          select: { id: true, name: true, email: true },
+        },
+      },
+    });
+
+    // 6. Notify the user who raised the concern
+    const payerUser = await prisma.user.findUnique({
+      where: { id: req.userId },
+      select: { id: true, name: true },
+    });
+
+    const payerName = payerUser?.name || 'The expense payer';
+    const groupName = expense.group?.name || 'Group';
+    const expenseDesc = expense.description || expense.category;
+
+    await prisma.notification.create({
+      data: {
+        userId: concern.raisedById,
+        groupId,
+        type: 'concern_responded',
+        title: 'Response to Transaction Concern',
+        message: `${payerName} responded to your concern on "${expenseDesc}" in ${groupName}: "${parsed.data.payerResponse}"`,
+        data: {
+          concernId: concern.id,
+          expenseId,
+          groupId,
+          payerId: req.userId,
+          status: parsed.data.status || 'resolved',
+          payerResponse: parsed.data.payerResponse,
+        },
+      },
+    });
+
+    return res.status(200).json({
+      success: true,
+      concern: updatedConcern,
+      message: 'Response recorded and raiser notified.',
+    });
+  } catch (error) {
+    console.error('Respond to concern error:', error);
     next(error);
   }
 });

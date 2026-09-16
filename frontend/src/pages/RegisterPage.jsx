@@ -27,7 +27,10 @@ export default function RegisterPage() {
       };
 
       const { data } = await api.post('/api/auth/register', payload);
-      if (data.token) {
+      if (data.requireVerification || !data.token) {
+        sessionStorage.setItem('pending_verify_email', payload.email);
+        navigate('/verify-email', { state: { email: payload.email, message: data.message } });
+      } else if (data.token) {
         localStorage.setItem('token', data.token);
         localStorage.setItem('splitup_token', data.token);
         localStorage.setItem('splitup_user', JSON.stringify(data.user));

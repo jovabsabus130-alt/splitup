@@ -7,11 +7,12 @@ export default function VerifyEmailPage() {
   const location = useLocation();
 
   // Email can be passed via location.state (from RegisterPage) or stored in sessionStorage
+  // Email can be passed via location.state (from RegisterPage) or stored in sessionStorage
   const emailFromState = location.state?.email || sessionStorage.getItem('pending_verify_email') || '';
-  const [email] = useState(emailFromState);
+  const [email, setEmail] = useState(emailFromState);
   const [otp, setOtp] = useState(['', '', '', '', '', '']);
   const [error, setError] = useState('');
-  const [message, setMessage] = useState('');
+  const [message, setMessage] = useState(location.state?.message || '');
   const [loading, setLoading] = useState(false);
   const [resending, setResending] = useState(false);
   const [countdown, setCountdown] = useState(60);
@@ -49,20 +50,25 @@ export default function VerifyEmailPage() {
 
   async function handleVerify(e) {
     e.preventDefault();
+    if (!email) {
+      setError('Please provide a valid email address.');
+      return;
+    }
     const code = otp.join('');
     if (code.length !== 6) {
       setError('Please enter the full 6-digit code.');
       return;
     }
     setError('');
+    setMessage('');
     setLoading(true);
     try {
-      const { data } = await api.post('/api/auth/verify-otp', { email, otp: code });
+      const { data } = await api.post('/api/auth/verify-email', { email, otp: code });
       localStorage.setItem('token', data.token);
       localStorage.setItem('splitup_token', data.token);
       localStorage.setItem('splitup_user', JSON.stringify(data.user));
       sessionStorage.removeItem('pending_verify_email');
-      navigate('/dashboard');
+      navigate('/dashboard', { replace: true });
     } catch (err) {
       setError(err.response?.data?.message || 'Verification failed');
     } finally {
@@ -71,13 +77,17 @@ export default function VerifyEmailPage() {
   }
 
   async function handleResend() {
-    if (countdown > 0) return;
+    if (countdown > 0 || resending) return;
+    if (!email) {
+      setError('Please provide an email address to resend the code.');
+      return;
+    }
     setResending(true);
     setError('');
     setMessage('');
     try {
-      await api.post('/api/auth/resend-otp', { email });
-      setMessage('A new code has been sent to your email.');
+      const { data } = await api.post('/api/auth/resend-verification', { email });
+      setMessage(data?.message || 'A new code has been sent to your email.');
       setCountdown(60);
       setOtp(['', '', '', '', '', '']);
       inputRefs.current[0]?.focus();
@@ -100,6 +110,19 @@ export default function VerifyEmailPage() {
         </div>
 
         <form onSubmit={handleVerify} className="form-grid">
+          {!emailFromState && (
+            <label className="form-label" style={{ marginBottom: 'var(--space-1)' }}>
+              Email Address
+              <input
+                type="email"
+                placeholder="name@example.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+              />
+            </label>
+          )}
+
           <div className="otp-inputs" onPaste={handlePaste}>
             {otp.map((digit, i) => (
               <input

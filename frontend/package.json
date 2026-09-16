@@ -6,10 +6,16 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "cap:build": "vite build && cap sync",
+    "cap:sync": "cap sync",
+    "cap:open": "cap open android",
     "lint": "oxlint",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@capacitor/android": "^8.5.2",
+    "@capacitor/cli": "^8.5.2",
+    "@capacitor/core": "^8.5.2",
     "@clerk/clerk-react": "^5.61.9",
     "axios": "^1.19.0",
     "qrcode": "^1.5.4",

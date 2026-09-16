@@ -70,6 +70,10 @@ router.post('/groups/:groupId/settlements/:settlementId/pay', async (req, res, n
       return res.status(403).json({ success: false, message: 'Only the borrower can mark payment as paid' });
     }
 
+    if (settlement.status === 'completed') {
+      return res.status(400).json({ success: false, message: 'Settlement is already completed' });
+    }
+
     const updated = await prisma.settlement.update({
       where: { id: settlementId },
       data: {
@@ -138,8 +142,13 @@ router.post('/groups/:groupId/settlements/:settlementId/confirm', async (req, re
       return res.status(404).json({ success: false, message: 'Settlement not found' });
     }
 
-    if (settlement.toId !== req.userId && settlement.fromId !== req.userId) {
-      return res.status(403).json({ success: false, message: 'Only participants in this settlement can confirm it' });
+    // Only the receiver (toId) who received the funds is authorized to confirm receipt
+    if (settlement.toId !== req.userId) {
+      return res.status(403).json({ success: false, message: 'Only the receiver can confirm payment' });
+    }
+
+    if (settlement.status === 'completed') {
+      return res.status(400).json({ success: false, message: 'Settlement is already completed' });
     }
 
     const updated = await prisma.settlement.update({
@@ -226,6 +235,10 @@ router.post('/groups/:groupId/settlements/:settlementId/reject', async (req, res
       return res.status(403).json({ success: false, message: 'Only the receiver can reject a payment' });
     }
 
+    if (settlement.status === 'completed') {
+      return res.status(400).json({ success: false, message: 'Cannot reject an already completed settlement' });
+    }
+
     const rejectionText = reason && reason.trim() ? reason.trim() : 'Payment not received by receiver.';
 
     const updated = await prisma.settlement.update({
@@ -302,8 +315,12 @@ router.post('/groups/:groupId/settlements/:settlementId/settle', async (req, res
       return res.status(404).json({ success: false, message: 'Settlement not found' });
     }
 
-    if (settlement.fromId !== req.userId && settlement.toId !== req.userId) {
-      return res.status(403).json({ success: false, message: 'Only participants in this settlement can mark it settled' });
+    if (settlement.toId !== req.userId) {
+      return res.status(403).json({ success: false, message: 'Only the receiver can confirm payment' });
+    }
+
+    if (settlement.status === 'completed') {
+      return res.status(400).json({ success: false, message: 'Settlement is already completed' });
     }
 
     const updated = await prisma.settlement.update({

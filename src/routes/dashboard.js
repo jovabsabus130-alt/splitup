@@ -83,6 +83,28 @@ router.get('/', async (req, res, next) => {
 
     const totalNetBalance = totalOwedToYou - totalYouOwe;
 
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const startOfNextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+
+    // Compute authenticated user's actual expense share for the current calendar month
+    const userMonthlySplits = await prisma.expenseSplit.findMany({
+      where: {
+        userId: req.userId,
+        expense: {
+          createdAt: {
+            gte: startOfMonth,
+            lt: startOfNextMonth,
+          },
+        },
+      },
+      select: {
+        share: true,
+      },
+    });
+
+    const myMonthlyExpense = userMonthlySplits.reduce((acc, split) => acc + Number(split.share), 0);
+
     // Fetch recent 5 expenses across all groups the user belongs to
     let recentExpenses = [];
     if (groupIds.length > 0) {
@@ -147,9 +169,11 @@ router.get('/', async (req, res, next) => {
     return res.status(200).json({
       success: true,
       summary: {
-        totalNetBalance: Number(totalNetBalance.toFixed(2)),
+        myMonthlyExpense: Number(myMonthlyExpense.toFixed(2)),
         totalOwedToYou: Number(totalOwedToYou.toFixed(2)),
         totalYouOwe: Number(totalYouOwe.toFixed(2)),
+        totalNetBalance: Number(totalNetBalance.toFixed(2)),
+        currentMonthName: now.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
         groupsCount: groups.length,
         adminGroupsCount: groups.filter((g) => g.isAdmin).length,
       },

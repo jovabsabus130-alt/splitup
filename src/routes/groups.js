@@ -121,6 +121,29 @@ router.post('/:groupId/members', async (req, res, next) => {
       },
     });
 
+    // Notify the added user
+    if (userId !== req.userId) {
+      const requesterUser = await prisma.user.findUnique({
+        where: { id: req.userId },
+        select: { name: true },
+      });
+
+      await prisma.notification.create({
+        data: {
+          userId,
+          groupId,
+          type: 'group_invitation',
+          title: 'Added to Group',
+          message: `${requesterUser?.name || 'A group member'} added you to "${group.name}".`,
+          data: {
+            groupId,
+            groupName: group.name,
+            addedById: req.userId,
+          },
+        },
+      });
+    }
+
     return res.status(201).json({ success: true, member });
   } catch (error) {
     console.error('Add member error:', error);
@@ -135,7 +158,7 @@ router.post('/:groupId/join-request', async (req, res, next) => {
 
     const group = await prisma.group.findUnique({
       where: { id: groupId },
-      select: { id: true, name: true },
+      select: { id: true, name: true, adminId: true },
     });
 
     if (!group) return res.status(404).json({ success: false, message: 'Group not found' });
@@ -153,6 +176,31 @@ router.post('/:groupId/join-request', async (req, res, next) => {
       update: { status: 'pending' },
       create: { groupId, userId: req.userId, status: 'pending' },
     });
+
+    // Notify group admin of join request
+    if (group.adminId && group.adminId !== req.userId) {
+      const requesterUser = await prisma.user.findUnique({
+        where: { id: req.userId },
+        select: { name: true },
+      });
+
+      await prisma.notification.create({
+        data: {
+          userId: group.adminId,
+          groupId,
+          type: 'join_request',
+          title: 'New Join Request',
+          message: `${requesterUser?.name || 'A user'} requested to join "${group.name}".`,
+          data: {
+            groupId,
+            groupName: group.name,
+            requestId: joinRequest.id,
+            requesterId: req.userId,
+            requesterName: requesterUser?.name,
+          },
+        },
+      });
+    }
 
     return res.status(201).json({ success: true, joinRequest, groupName: group.name });
   } catch (error) {
@@ -284,6 +332,32 @@ router.patch('/:groupId/join-requests/:requestId', async (req, res, next) => {
       }
     }
 
+    // Notify requester of decision
+    if (joinRequest.userId !== req.userId) {
+      const isApproved = status === 'approved';
+      const groupInfo = await prisma.group.findUnique({
+        where: { id: groupId },
+        select: { name: true },
+      });
+
+      await prisma.notification.create({
+        data: {
+          userId: joinRequest.userId,
+          groupId,
+          type: isApproved ? 'join_request_approved' : 'join_request_denied',
+          title: isApproved ? 'Join Request Approved' : 'Join Request Denied',
+          message: isApproved
+            ? `Your request to join "${groupInfo?.name || 'the group'}" was approved! You can now view and log expenses.`
+            : `Your request to join "${groupInfo?.name || 'the group'}" was denied by the group admin.`,
+          data: {
+            groupId,
+            groupName: groupInfo?.name,
+            status,
+          },
+        },
+      });
+    }
+
     return res.status(200).json({ success: true, message: `Request ${status}` });
   } catch (error) {
     console.error('Update join request error:', error);
@@ -369,7 +443,7 @@ router.delete('/:groupId/members/me', async (req, res, next) => {
       where: {
         groupId,
         fromId: req.userId,
-        status: 'pending',
+        status: { in: ['pending', 'pending_confirmation'] },
         amount: { gt: 0 },
       },
     });
@@ -377,7 +451,7 @@ router.delete('/:groupId/members/me', async (req, res, next) => {
     if (pendingDebt) {
       return res.status(409).json({
         success: false,
-        message: `You have a pending debt of ₹${Number(pendingDebt.amount).toFixed(2)} in this group. Settle up before leaving.`,
+        message: `You have a pending or unconfirmed debt of ₹${Number(pendingDebt.amount).toFixed(2)} in this group. Settle up before leaving.`,
       });
     }
 
