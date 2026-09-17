@@ -42,6 +42,8 @@ router.get('/', async (req, res, next) => {
         name: g.name,
         adminId: g.adminId,
         isAdmin,
+        isDeleted: Boolean(g.isDeleted),
+        deletedAt: g.deletedAt || null,
         membersCount: g.members ? g.members.length : 0,
         createdAt: g.createdAt,
         pendingRequests: isAdmin ? g.joinRequests : [],

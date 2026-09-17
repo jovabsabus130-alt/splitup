@@ -71,6 +71,7 @@ export default function BalancesPage() {
       const { data } = await api.post(`/api/groups/${groupId}/settlements/${settlementId}/pay`);
       setMessage(data.message || 'Payment marked as sent! Waiting for receiver confirmation.');
       await loadData();
+      window.dispatchEvent(new CustomEvent('splitup:settlement_updated', { detail: { groupId, settlementId } }));
     } catch (apiError) {
       setError(apiError.response?.data?.message || 'Failed to update payment status');
     } finally {
@@ -87,6 +88,7 @@ export default function BalancesPage() {
       const { data } = await api.post(`/api/groups/${groupId}/settlements/${settlementId}/confirm`);
       setMessage(data.message || 'Payment confirmed and balance updated! ✓');
       await loadData();
+      window.dispatchEvent(new CustomEvent('splitup:settlement_updated', { detail: { groupId, settlementId } }));
     } catch (apiError) {
       setError(apiError.response?.data?.message || 'Failed to confirm settlement');
     } finally {
@@ -106,6 +108,7 @@ export default function BalancesPage() {
       const { data } = await api.post(`/api/groups/${groupId}/settlements/${settlementId}/reject`, { reason });
       setMessage(data.message || 'Payment rejected. The borrower has been notified.');
       await loadData();
+      window.dispatchEvent(new CustomEvent('splitup:settlement_updated', { detail: { groupId, settlementId } }));
     } catch (apiError) {
       setError(apiError.response?.data?.message || 'Failed to reject settlement');
     } finally {

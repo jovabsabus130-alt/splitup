@@ -97,6 +97,33 @@ export default function AppSidebar({
   const isDashboardActive = location.pathname === '/dashboard' || location.pathname === '/';
   const isHistoryActive = location.pathname === '/history';
 
+  const [showJoinModal, setShowJoinModal] = useState(false);
+  const [joinInput, setJoinInput] = useState('');
+  const [joinError, setJoinError] = useState('');
+
+  function handleJoinSubmit(e) {
+    e.preventDefault();
+    setJoinError('');
+    const raw = joinInput.trim();
+    if (!raw) return;
+
+    let targetId = raw;
+    if (raw.includes('/join/')) {
+      const parts = raw.split('/join/');
+      targetId = parts[parts.length - 1].split('?')[0].split('#')[0].trim();
+    }
+
+    if (!targetId || targetId === 'undefined') {
+      setJoinError('Please enter a valid Group ID or invite link.');
+      return;
+    }
+
+    setShowJoinModal(false);
+    setJoinInput('');
+    if (onCloseMobile) onCloseMobile();
+    navigate(`/join/${targetId}`);
+  }
+
   return (
     <>
       <aside className={`app-sidebar${mobileOpen ? ' mobile-open' : ''}`}>
@@ -173,14 +200,28 @@ export default function AppSidebar({
 
           <div className="sidebar-section-header">
             <span>YOUR GROUPS ({groups.length})</span>
-            <button
-              type="button"
-              className="sidebar-add-btn"
-              onClick={() => setShowCreateModal(true)}
-              title="Create new group"
-            >
-              +
-            </button>
+            <div style={{ display: 'flex', gap: '4px' }}>
+              <button
+                type="button"
+                className="sidebar-add-btn"
+                onClick={() => {
+                  setJoinError('');
+                  setShowJoinModal(true);
+                }}
+                title="Join existing group"
+                style={{ fontSize: '11px', width: '22px' }}
+              >
+                🔗
+              </button>
+              <button
+                type="button"
+                className="sidebar-add-btn"
+                onClick={() => setShowCreateModal(true)}
+                title="Create new group"
+              >
+                +
+              </button>
+            </div>
           </div>
 
           <div className="sidebar-groups-list">
@@ -214,11 +255,17 @@ export default function AppSidebar({
                     to={`/groups/${group.id}`}
                     className={`sidebar-group-item${isActive ? ' active' : ''}`}
                     onClick={onCloseMobile}
+                    style={{ opacity: group.isDeleted ? 0.75 : 1 }}
                   >
                     <div className="group-avatar-mini">
                       {group.name.charAt(0).toUpperCase()}
                     </div>
                     <span className="group-item-name">{group.name}</span>
+                    {group.isDeleted && (
+                      <span style={{ fontSize: '9px', background: 'rgba(239, 68, 68, 0.15)', color: '#ef4444', padding: '1px 4px', borderRadius: '4px', marginLeft: 'auto', marginRight: '4px' }}>
+                        Deleted
+                      </span>
+                    )}
                     {group.pendingRequestsCount > 0 && (
                       <span className="group-unread-badge">
                         {group.pendingRequestsCount}
@@ -230,16 +277,28 @@ export default function AppSidebar({
             )}
           </div>
 
-          <div style={{ padding: '8px 12px' }}>
+          <div style={{ padding: '8px 12px', display: 'flex', gap: '6px' }}>
             <button
               type="button"
               className="sidebar-new-group-btn"
+              style={{ flex: 1, padding: '6px 8px', fontSize: '12px' }}
+              onClick={() => {
+                setJoinError('');
+                setShowJoinModal(true);
+              }}
+            >
+              🔗 Join
+            </button>
+            <button
+              type="button"
+              className="sidebar-new-group-btn"
+              style={{ flex: 1, padding: '6px 8px', fontSize: '12px' }}
               onClick={() => {
                 setCreateError(null);
                 setShowCreateModal(true);
               }}
             >
-              + New Group
+              + Create
             </button>
           </div>
         </div>
@@ -265,6 +324,61 @@ export default function AppSidebar({
           </button>
         </div>
       </aside>
+
+      {/* ── Join Group Modal ──────────────────────────────────── */}
+      {showJoinModal && (
+        <div
+          className="modal-overlay"
+          onClick={(e) => { if (e.target === e.currentTarget) setShowJoinModal(false); }}
+        >
+          <div className="modal-box" style={{ maxWidth: '380px' }}>
+            <button
+              className="modal-close"
+              onClick={() => setShowJoinModal(false)}
+            >
+              ✕
+            </button>
+            <div className="card-header">
+              <h2 className="card-title">Join a Group</h2>
+            </div>
+            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', margin: '0 0 10px 0' }}>
+              Enter a Group ID or paste an invite link to request to join.
+            </p>
+
+            {joinError && (
+              <div style={{ margin: '4px 0 10px 0', padding: '6px 10px', background: 'rgba(239, 68, 68, 0.12)', border: '1px solid rgba(239, 68, 68, 0.3)', borderRadius: '6px', color: '#ef4444', fontSize: '0.8rem' }}>
+                {joinError}
+              </div>
+            )}
+
+            <form onSubmit={handleJoinSubmit} className="form-grid">
+              <input
+                value={joinInput}
+                onChange={(e) => setJoinInput(e.target.value)}
+                placeholder="Group ID or Invite Link"
+                autoFocus
+                required
+              />
+              <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '4px' }}>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => setShowJoinModal(false)}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="btn-primary"
+                  disabled={!joinInput.trim()}
+                >
+                  Join ➔
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* ── Quick Create Group Modal ──────────────────────────── */}
       {showCreateModal && (

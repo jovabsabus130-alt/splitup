@@ -3,13 +3,20 @@ import { Link, useParams } from 'react-router-dom';
 import api from '../lib/api';
 
 export default function JoinRequestPage() {
-  const { groupId } = useParams();
+  const { groupId: rawGroupId } = useParams();
+  const groupId = (rawGroupId || '').trim();
 
   const [groupName, setGroupName] = useState('');
   const [status, setStatus] = useState('idle'); // idle | loading | success | error | already_member
   const [errorMsg, setErrorMsg] = useState('');
 
   useEffect(() => {
+    if (!groupId || groupId === 'undefined') {
+      setErrorMsg('This invite link is missing a valid Group ID. Please request a fresh invite link or Group ID from the group admin.');
+      setStatus('error');
+      return;
+    }
+
     async function fetchGroupName() {
       try {
         const { data } = await api.get(`/api/groups/${groupId}/preview`);
@@ -18,6 +25,8 @@ export default function JoinRequestPage() {
           setStatus('already_member');
         } else if (data.requestStatus === 'pending') {
           setStatus('success');
+        } else {
+          setStatus('idle');
         }
       } catch (err) {
         if (err.response?.status === 404) {
@@ -25,6 +34,7 @@ export default function JoinRequestPage() {
           setStatus('error');
         } else {
           setErrorMsg(err.response?.data?.message || 'Failed to load group invite.');
+          setStatus('error');
         }
       }
     }
@@ -32,6 +42,7 @@ export default function JoinRequestPage() {
   }, [groupId]);
 
   async function handleRequest() {
+    if (!groupId || groupId === 'undefined') return;
     setStatus('loading');
     setErrorMsg('');
     try {

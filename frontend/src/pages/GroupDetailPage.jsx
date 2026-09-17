@@ -15,12 +15,14 @@ export default function GroupDetailPage() {
 
   const [group, setGroup] = useState(null);
   const [expenses, setExpenses] = useState([]);
+  const [balances, setBalances] = useState([]);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [showShare, setShowShare] = useState(false);
   const [showMoreMenu, setShowMoreMenu] = useState(false);
   const [showFABModal, setShowFABModal] = useState(false);
   const [currentUserId, setCurrentUserId] = useState(null);
+  const [actionLoading, setActionLoading] = useState({});
 
   // Group Delete / Leave Confirmation States
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -40,6 +42,7 @@ export default function GroupDetailPage() {
 
   const members = useMemo(() => group?.members?.map((m) => m.user) || [], [group]);
   const isAdmin = !!group?.isAdmin;
+  const isDeletedGroup = Boolean(group?.isDeleted);
 
   useEffect(() => {
     const userStr = localStorage.getItem('splitup_user');
@@ -54,12 +57,14 @@ export default function GroupDetailPage() {
   async function loadGroupData() {
     setError('');
     try {
-      const [groupRes, expensesRes] = await Promise.all([
+      const [groupRes, expensesRes, balancesRes] = await Promise.all([
         api.get(`/api/groups/${groupId}`),
         api.get(`/api/groups/${groupId}/expenses`),
+        api.get(`/api/groups/${groupId}/balances`).catch(() => ({ data: { balances: [] } })),
       ]);
       setGroup(groupRes.data.group);
       setExpenses(expensesRes.data.expenses || []);
+      setBalances(balancesRes.data.balances || []);
     } catch (apiError) {
       setError(apiError.response?.data?.message || 'Failed to load group');
     }
@@ -67,7 +72,27 @@ export default function GroupDetailPage() {
 
   useEffect(() => {
     loadGroupData();
+
+    // Listen for global settlement updates to refresh balance in real time
+    function handleSettlementUpdate() {
+      loadGroupData();
+    }
+    window.addEventListener('splitup:settlement_updated', handleSettlementUpdate);
+    return () => window.removeEventListener('splitup:settlement_updated', handleSettlementUpdate);
   }, [groupId]);
+
+  async function handleManageJoinRequest(requestId, status) {
+    setActionLoading((prev) => ({ ...prev, [requestId]: status }));
+    try {
+      await api.patch(`/api/groups/${groupId}/join-requests/${requestId}`, { status });
+      setMessage(`Join request ${status === 'approved' ? 'approved' : 'denied'} successfully.`);
+      await loadGroupData();
+    } catch (err) {
+      setError(err.response?.data?.message || 'Failed to update join request');
+    } finally {
+      setActionLoading((prev) => ({ ...prev, [requestId]: null }));
+    }
+  }
 
   async function handleDeleteExpenseConfirm() {
     if (!deletingExpense) return;
@@ -93,7 +118,9 @@ export default function GroupDetailPage() {
     setError('');
     try {
       await api.delete(`/api/groups/${groupId}`);
-      navigate('/dashboard');
+      setMessage('Group deleted successfully. Preserved in your archive.');
+      setConfirmDelete(false);
+      await loadGroupData();
     } catch (apiError) {
       setError(apiError.response?.data?.message || 'Failed to delete group');
       setDeletingGroup(false);
@@ -121,8 +148,13 @@ export default function GroupDetailPage() {
     }, 0);
   }, [expenses]);
 
+  // Use real-time balance incorporating settlements, falling back to expenses calculation
   const userGroupNet = useMemo(() => {
     if (!currentUserId) return 0;
+    const userBal = balances.find((b) => b.userId === currentUserId);
+    if (userBal !== undefined) {
+      return Number(userBal.netBalance) || 0;
+    }
     return expenses.reduce((net, exp) => {
       if (exp.isDeleted) return net;
       const isPayer = exp.paidById === currentUserId || exp.paidBy?.id === currentUserId;
@@ -131,7 +163,7 @@ export default function GroupDetailPage() {
       const share = mySplit ? Number(mySplit.share) || 0 : 0;
       return net + (paid - share);
     }, 0);
-  }, [expenses, currentUserId]);
+  }, [balances, expenses, currentUserId]);
 
   return (
     <div className="group-detail-view" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)', width: '100%', position: 'relative', paddingBottom: '90px' }}>
@@ -216,7 +248,7 @@ export default function GroupDetailPage() {
                 <span>👤+</span>
                 <span>Invite Members</span>
               </button>
-              {isAdmin ? (
+              {isAdmin && !isDeletedGroup ? (
                 <button
                   type="button"
                   className="sidebar-nav-item"
@@ -229,7 +261,7 @@ export default function GroupDetailPage() {
                   <span>🗑️</span>
                   <span>Delete Group</span>
                 </button>
-              ) : (
+              ) : !isAdmin && !isDeletedGroup ? (
                 <button
                   type="button"
                   className="sidebar-nav-item"
@@ -242,7 +274,7 @@ export default function GroupDetailPage() {
                   <span>🚪</span>
                   <span>Leave Group</span>
                 </button>
-              )}
+              ) : null}
             </div>
           )}
         </div>
@@ -250,6 +282,104 @@ export default function GroupDetailPage() {
 
       {error && <div className="error-text">{error}</div>}
       {message && <div className="success-text">{message}</div>}
+
+      {/* ── Deleted / Archived Group Notice Banner ── */}
+      {isDeletedGroup && (
+        <div
+          className="card"
+          style={{
+            background: 'rgba(239, 68, 68, 0.08)',
+            border: '1px solid rgba(239, 68, 68, 0.3)',
+            borderRadius: 'var(--radius-lg)',
+            padding: '12px 16px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '12px',
+          }}
+        >
+          <span style={{ fontSize: '24px' }}>🔒</span>
+          <div>
+            <strong style={{ color: 'var(--danger)', fontSize: '14px', display: 'block' }}>
+              This group has been deleted / archived
+            </strong>
+            <span style={{ color: 'var(--text-secondary)', fontSize: '12.5px', lineHeight: 1.4 }}>
+              All transaction records, expense splits, and settlement history are preserved in read-only mode for audit and reference.
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* ── Admin Pending Join Requests Review Section ── */}
+      {isAdmin && !isDeletedGroup && group?.joinRequests && group.joinRequests.length > 0 && (
+        <div
+          className="card"
+          style={{
+            background: 'rgba(99, 102, 241, 0.06)',
+            border: '1px solid rgba(99, 102, 241, 0.25)',
+            borderRadius: 'var(--radius-lg)',
+            padding: 'var(--space-4)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '10px',
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={{ fontSize: '16px' }}>🚪</span>
+              <strong style={{ fontSize: '13.5px', color: 'var(--text-primary)' }}>
+                Pending Join Requests ({group.joinRequests.length})
+              </strong>
+            </div>
+            <span style={{ fontSize: '11.5px', color: 'var(--text-muted)' }}>Admin Action Required</span>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            {group.joinRequests.map((req) => (
+              <div
+                key={req.id}
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  background: 'var(--bg-surface)',
+                  padding: '8px 12px',
+                  borderRadius: 'var(--radius-md)',
+                  border: '1px solid var(--border-subtle)',
+                }}
+              >
+                <div>
+                  <strong style={{ fontSize: '13px', display: 'block', color: 'var(--text-primary)' }}>
+                    {req.user?.name || 'User'}
+                  </strong>
+                  <span style={{ fontSize: '11.5px', color: 'var(--text-muted)' }}>
+                    {req.user?.email}
+                  </span>
+                </div>
+                <div style={{ display: 'flex', gap: '6px' }}>
+                  <button
+                    type="button"
+                    className="btn-danger"
+                    style={{ height: '28px', fontSize: '11.5px', padding: '0 10px' }}
+                    onClick={() => handleManageJoinRequest(req.id, 'denied')}
+                    disabled={!!actionLoading[req.id]}
+                  >
+                    Deny
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    style={{ height: '28px', fontSize: '11.5px', padding: '0 12px', backgroundColor: 'var(--success)', borderColor: 'var(--success)' }}
+                    onClick={() => handleManageJoinRequest(req.id, 'approved')}
+                    disabled={!!actionLoading[req.id]}
+                  >
+                    {actionLoading[req.id] === 'approved' ? 'Approving…' : 'Approve'}
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* ── Top Summary 2-in-1 Card (Matching Wireframe Image 2) ── */}
       <div
@@ -607,25 +737,29 @@ export default function GroupDetailPage() {
       </div>
 
       {/* ── Floating Action Button [+] (Matching Wireframe Image 2) ── */}
-      <button
-        type="button"
-        className="fab-btn"
-        onClick={() => setShowFABModal(true)}
-        aria-label="Log a transaction or Parse with AI"
-        title="Log a transaction / Parse with AI"
-      >
-        <span className="fab-icon">+</span>
-      </button>
+      {!isDeletedGroup && (
+        <button
+          type="button"
+          className="fab-btn"
+          onClick={() => setShowFABModal(true)}
+          aria-label="Log a transaction or Parse with AI"
+          title="Log a transaction / Parse with AI"
+        >
+          <span className="fab-icon">+</span>
+        </button>
+      )}
 
       {/* ── Log Expense & AI Parse FAB Modal (Matching Wireframe Image 3/4) ── */}
-      <LogExpenseFABModal
-        isOpen={showFABModal}
-        onClose={() => setShowFABModal(false)}
-        groupId={groupId}
-        groupName={group?.name}
-        members={members}
-        onExpenseAdded={loadGroupData}
-      />
+      {!isDeletedGroup && (
+        <LogExpenseFABModal
+          isOpen={showFABModal}
+          onClose={() => setShowFABModal(false)}
+          groupId={groupId}
+          groupName={group?.name}
+          members={members}
+          onExpenseAdded={loadGroupData}
+        />
+      )}
 
       {/* ── Transaction Detail Modal ── */}
       {detailExpense && (
@@ -635,15 +769,15 @@ export default function GroupDetailPage() {
           members={members}
           currentUserId={currentUserId}
           onClose={() => setDetailExpense(null)}
-          onEdit={(exp) => setEditingExpense(exp)}
-          onFlag={(exp) => setConcernExpense(exp)}
-          onDelete={(exp) => setDeletingExpense(exp)}
+          onEdit={!isDeletedGroup ? (exp) => setEditingExpense(exp) : undefined}
+          onFlag={!isDeletedGroup ? (exp) => setConcernExpense(exp) : undefined}
+          onDelete={!isDeletedGroup ? (exp) => setDeletingExpense(exp) : undefined}
           onHistory={(exp) => setHistoryExpense(exp)}
         />
       )}
 
       {/* ── Edit Expense Modal ── */}
-      {editingExpense && (
+      {editingExpense && !isDeletedGroup && (
         <EditExpenseModal
           groupId={groupId}
           expense={editingExpense}
@@ -683,12 +817,14 @@ export default function GroupDetailPage() {
       {showShare && group && (
         <ShareModal
           group={group}
+          groupId={group.id}
+          groupName={group.name}
           onClose={() => setShowShare(false)}
         />
       )}
 
       {/* ── Delete Expense Modal ── */}
-      {deletingExpense && (
+      {deletingExpense && !isDeletedGroup && (
         <div className="modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) setDeletingExpense(null); }}>
           <div className="modal-box" style={{ maxWidth: '440px' }}>
             <button className="modal-close" onClick={() => setDeletingExpense(null)}>✕</button>
@@ -708,15 +844,18 @@ export default function GroupDetailPage() {
       )}
 
       {/* ── Delete Group Modal ── */}
-      {confirmDelete && (
+      {confirmDelete && !isDeletedGroup && (
         <div className="modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) setConfirmDelete(false); }}>
           <div className="modal-box" style={{ maxWidth: '420px' }}>
             <button className="modal-close" onClick={() => setConfirmDelete(false)}>✕</button>
             <h2 className="card-title">Delete Group</h2>
-            <p style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
-              This will permanently remove the group, its expenses, and settlements.
+            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', lineHeight: 1.4 }}>
+              Are you sure you want to delete <strong>{group?.name}</strong>?
             </p>
-            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: 'var(--space-2)' }}>
+            <p style={{ fontSize: '12px', color: 'var(--text-muted)', background: 'var(--bg-subtle)', padding: '8px 12px', borderRadius: 'var(--radius-sm)' }}>
+              ℹ️ Groups can only be deleted once all balances are ₹0.00 (fully settled). Deletion will archive the group so all past transactions remain visible in read-only mode.
+            </p>
+            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: 'var(--space-3)' }}>
               <button type="button" className="btn-secondary" onClick={() => setConfirmDelete(false)}>Cancel</button>
               <button type="button" className="btn-danger" onClick={handleDeleteGroup} disabled={deletingGroup}>
                 {deletingGroup ? 'Deleting…' : 'Delete Group'}

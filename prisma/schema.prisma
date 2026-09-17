@@ -35,6 +35,8 @@ model Group {
   id            String         @id @default(cuid())
   name          String
   adminId       String
+  isDeleted     Boolean        @default(false)
+  deletedAt     DateTime?
   createdAt     DateTime       @default(now())
   members       GroupMember[]
   expenses      Expense[]

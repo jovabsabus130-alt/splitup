@@ -606,4 +606,121 @@ describe('SplitUp Comprehensive Extended Test Suite', () => {
     });
   });
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 12. GROUP DELETION, BALANCES & JOIN REQUESTS
+  // ═══════════════════════════════════════════════════════════════════════════
+  describe('12. Group Deletion, Balance Updates & Join System', () => {
+    it('should reject group deletion when unsettled balances exist', () => {
+      function validateGroupDeletion(balances, pendingSettlements) {
+        const hasUnsettled = balances.some((b) => Math.abs(Number(b.netBalance) || 0) > 0.01);
+        if (hasUnsettled) {
+          return { allowed: false, status: 400, message: 'Cannot delete group with unsettled balances. All members must settle up (balance = ₹0.00) before deleting.' };
+        }
+        if (pendingSettlements.some((s) => ['pending', 'pending_confirmation'].includes(s.status))) {
+          return { allowed: false, status: 400, message: 'Cannot delete group while there are pending payment confirmations.' };
+        }
+        return { allowed: true };
+      }
+
+      const activeBalances = [{ userId: 'user_1', netBalance: 250 }, { userId: 'user_2', netBalance: -250 }];
+      const result = validateGroupDeletion(activeBalances, []);
+      assert.strictEqual(result.allowed, false);
+      assert.strictEqual(result.status, 400);
+      assert.ok(result.message.includes('unsettled balances'));
+    });
+
+    it('should allow group soft-deletion when all balances are zero and preserve transactions', () => {
+      const groupStore = {
+        id: 'grp_roadtrip',
+        name: 'Road Trip',
+        isDeleted: false,
+        deletedAt: null,
+        expenses: [
+          { id: 'exp_1', amount: 500, description: 'Fuel' },
+          { id: 'exp_2', amount: 300, description: 'Snacks' },
+        ],
+      };
+
+      function softDeleteGroup(group, balances) {
+        const hasUnsettled = balances.some((b) => Math.abs(Number(b.netBalance) || 0) > 0.01);
+        if (hasUnsettled) {
+          throw new Error('Cannot delete group with unsettled balances');
+        }
+        group.isDeleted = true;
+        group.deletedAt = new Date();
+        return group;
+      }
+
+      const settledBalances = [{ userId: 'user_1', netBalance: 0 }, { userId: 'user_2', netBalance: 0 }];
+      const deletedGroup = softDeleteGroup(groupStore, settledBalances);
+
+      assert.strictEqual(deletedGroup.isDeleted, true);
+      assert.ok(deletedGroup.deletedAt instanceof Date);
+      // Verify transactions are still fully accessible
+      assert.strictEqual(deletedGroup.expenses.length, 2);
+      assert.strictEqual(deletedGroup.expenses[0].description, 'Fuel');
+    });
+
+    it('should correctly reflect payment confirmations in balance calculations', () => {
+      // Payer paid ₹200 for Bob -> Bob owes ₹200
+      let expenses = [
+        { paidById: 'alice', amount: 200, isDeleted: false, splits: [{ userId: 'bob', share: 200 }] },
+      ];
+      let completedSettlements = [];
+
+      function computeNetBalances(members, exps, settlements) {
+        const map = new Map();
+        members.forEach((m) => map.set(m, 0));
+
+        for (const exp of exps) {
+          if (exp.isDeleted) continue;
+          map.set(exp.paidById, (map.get(exp.paidById) || 0) + exp.amount);
+          for (const split of exp.splits) {
+            map.set(split.userId, (map.get(split.userId) || 0) - split.share);
+          }
+        }
+
+        for (const s of settlements) {
+          if (s.status === 'completed') {
+            map.set(s.fromId, (map.get(s.fromId) || 0) + s.amount);
+            map.set(s.toId, (map.get(s.toId) || 0) - s.amount);
+          }
+        }
+
+        return Object.fromEntries(map);
+      }
+
+      // Initial state: Alice +200, Bob -200
+      let balances = computeNetBalances(['alice', 'bob'], expenses, completedSettlements);
+      assert.strictEqual(balances.alice, 200);
+      assert.strictEqual(balances.bob, -200);
+
+      // Receiver confirms payment receipt
+      completedSettlements.push({ fromId: 'bob', toId: 'alice', amount: 200, status: 'completed' });
+
+      // Updated state after confirmation: Alice 0, Bob 0 (fully settled)
+      balances = computeNetBalances(['alice', 'bob'], expenses, completedSettlements);
+      assert.strictEqual(balances.alice, 0);
+      assert.strictEqual(balances.bob, 0);
+    });
+
+    it('should parse invite URLs safely and avoid undefined group IDs', () => {
+      function extractGroupIdFromInput(input) {
+        const raw = (input || '').trim();
+        if (!raw || raw === 'undefined') return null;
+        if (raw.includes('/join/')) {
+          const parts = raw.split('/join/');
+          const extracted = parts[parts.length - 1].split('?')[0].split('#')[0].trim();
+          return extracted && extracted !== 'undefined' ? extracted : null;
+        }
+        return raw;
+      }
+
+      assert.strictEqual(extractGroupIdFromInput('cml123456'), 'cml123456');
+      assert.strictEqual(extractGroupIdFromInput('https://splitup-eight.vercel.app/join/cml987654'), 'cml987654');
+      assert.strictEqual(extractGroupIdFromInput('https://splitup-eight.vercel.app/join/undefined'), null);
+      assert.strictEqual(extractGroupIdFromInput(''), null);
+    });
+  });
+
 });

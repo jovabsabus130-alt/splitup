@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import QRCode from 'qrcode';
 
-export default function ShareModal({ groupId, groupName, onClose }) {
+export default function ShareModal({ group, groupId: propGroupId, groupName: propGroupName, onClose }) {
   const canvasRef = useRef(null);
   const [copied, setCopied] = useState(false);
 
-  const inviteUrl = `${window.location.origin}/join/${groupId}`;
+  const actualGroupId = propGroupId || group?.id || '';
+  const actualGroupName = propGroupName || group?.name || 'Group';
+  const inviteUrl = `${window.location.origin}/join/${actualGroupId}`;
 
   // Generate QR code on canvas
   useEffect(() => {
@@ -49,7 +51,7 @@ export default function ShareModal({ groupId, groupName, onClose }) {
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
       role="dialog"
       aria-modal="true"
-      aria-label={`Invite link for ${groupName}`}
+      aria-label={`Invite link for ${actualGroupName}`}
     >
       <div className="modal-box" style={{ maxWidth: '380px', textAlign: 'center' }}>
         <button
@@ -62,7 +64,7 @@ export default function ShareModal({ groupId, groupName, onClose }) {
         </button>
 
         <div className="card-header" style={{ justifyContent: 'center' }}>
-          <h2 className="card-title" style={{ fontSize: '16px' }}>Invite to {groupName}</h2>
+          <h2 className="card-title" style={{ fontSize: '16px' }}>Invite to {actualGroupName}</h2>
         </div>
 
         <div className="qr-wrapper">
@@ -82,10 +84,16 @@ export default function ShareModal({ groupId, groupName, onClose }) {
               {copied ? '✓ Copied' : 'Copy link'}
             </button>
           </div>
+
+          {actualGroupId && (
+            <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>
+              Group ID: <strong style={{ userSelect: 'all', color: 'var(--text-primary)' }}>{actualGroupId}</strong>
+            </div>
+          )}
         </div>
 
-        <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0 }}>
-          Share the link or QR code. Anyone who opens it can request to join, and you can approve them directly from the group page.
+        <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '4px 0 0 0' }}>
+          Share the link, Group ID, or QR code. Anyone with access can request to join, and you can approve them directly.
         </p>
       </div>
     </div>

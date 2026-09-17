@@ -39,6 +39,16 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok' });
 });
 
+// Root endpoint handler (satisfies Render health check, HEAD / and GET / pings)
+app.all('/', (req, res) => {
+  res.status(200).json({
+    status: 'ok',
+    service: 'SplitUp API',
+    version: '1.0.0',
+    timestamp: new Date().toISOString(),
+  });
+});
+
 // ── Concept: Server-side error handling (Score: 0.2) ─────────────────────────
 // 404 Catch-All Middleware for undefined endpoints
 app.use(notFoundHandler);

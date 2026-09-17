@@ -154,14 +154,23 @@ router.post('/:groupId/members', async (req, res, next) => {
 // ── Submit a join request via invite link ────────────────────────────────────
 router.post('/:groupId/join-request', async (req, res, next) => {
   try {
-    const { groupId } = req.params;
+    const rawGroupId = req.params.groupId || '';
+    const groupId = rawGroupId.trim();
+
+    if (!groupId) {
+      return res.status(400).json({ success: false, message: 'Invalid group identifier' });
+    }
 
     const group = await prisma.group.findUnique({
       where: { id: groupId },
-      select: { id: true, name: true, adminId: true },
+      select: { id: true, name: true, adminId: true, isDeleted: true },
     });
 
     if (!group) return res.status(404).json({ success: false, message: 'Group not found' });
+
+    if (group.isDeleted) {
+      return res.status(400).json({ success: false, message: 'This group has been deleted/archived and is not accepting new members.' });
+    }
 
     const alreadyMember = await prisma.groupMember.findUnique({
       where: { userId_groupId: { userId: req.userId, groupId } },
@@ -177,32 +186,36 @@ router.post('/:groupId/join-request', async (req, res, next) => {
       create: { groupId, userId: req.userId, status: 'pending' },
     });
 
-    // Notify group admin of join request
-    if (group.adminId && group.adminId !== req.userId) {
-      const requesterUser = await prisma.user.findUnique({
-        where: { id: req.userId },
-        select: { name: true },
-      });
+    // Notify group admin of join request with safe error recovery
+    try {
+      if (group.adminId && group.adminId !== req.userId) {
+        const requesterUser = await prisma.user.findUnique({
+          where: { id: req.userId },
+          select: { name: true },
+        });
 
-      await prisma.notification.create({
-        data: {
-          userId: group.adminId,
-          groupId,
-          type: 'join_request',
-          title: 'New Join Request',
-          message: `${requesterUser?.name || 'A user'} requested to join "${group.name}".`,
+        await prisma.notification.create({
           data: {
+            userId: group.adminId,
             groupId,
-            groupName: group.name,
-            requestId: joinRequest.id,
-            requesterId: req.userId,
-            requesterName: requesterUser?.name,
+            type: 'join_request',
+            title: 'New Join Request',
+            message: `${requesterUser?.name || 'A user'} requested to join "${group.name}".`,
+            data: {
+              groupId,
+              groupName: group.name,
+              requestId: joinRequest.id,
+              requesterId: req.userId,
+              requesterName: requesterUser?.name,
+            },
           },
-        },
-      });
+        });
+      }
+    } catch (notifErr) {
+      console.warn('Failed to create join request notification for admin:', notifErr.message);
     }
 
-    return res.status(201).json({ success: true, joinRequest, groupName: group.name });
+    return res.status(201).json({ success: true, message: 'Join request sent successfully', joinRequest, groupName: group.name });
   } catch (error) {
     console.error('Join request error:', error);
     next(error);
@@ -212,13 +225,15 @@ router.post('/:groupId/join-request', async (req, res, next) => {
 // ── Preview group info for invite link ──────────────────────────────────────
 router.get('/:groupId/preview', async (req, res, next) => {
   try {
-    const { groupId } = req.params;
+    const rawGroupId = req.params.groupId || '';
+    const groupId = rawGroupId.trim();
 
     const group = await prisma.group.findUnique({
       where: { id: groupId },
       select: {
         id: true,
         name: true,
+        isDeleted: true,
         members: {
           select: { userId: true },
         },
@@ -241,6 +256,7 @@ router.get('/:groupId/preview', async (req, res, next) => {
       group: {
         id: group.id,
         name: group.name,
+        isDeleted: Boolean(group.isDeleted),
       },
       isMember,
       requestStatus: existingRequest,
@@ -370,14 +386,14 @@ router.post('/:groupId/join', (req, res) => {
   return res.status(301).json({ message: 'Use POST /join-request instead' });
 });
 
-// ── Delete group (admin only) ─────────────────────────────────────────────────
+// ── Delete group (admin only, allowed only when all expenses are settled / zero balance) ──
 router.delete('/:groupId', async (req, res, next) => {
   try {
     const { groupId } = req.params;
 
     const group = await prisma.group.findUnique({
       where: { id: groupId },
-      select: { adminId: true },
+      select: { id: true, name: true, adminId: true, isDeleted: true },
     });
 
     if (!group) {
@@ -388,24 +404,51 @@ router.delete('/:groupId', async (req, res, next) => {
       return res.status(403).json({ success: false, message: 'Only the group admin can delete this group' });
     }
 
-    // Cascade delete inside a transaction
-    await prisma.$transaction(async (tx) => {
-      await tx.settlement.deleteMany({ where: { groupId } });
+    if (group.isDeleted) {
+      return res.status(400).json({ success: false, message: 'Group is already deleted' });
+    }
 
-      const expenses = await tx.expense.findMany({
-        where: { groupId },
-        select: { id: true },
+    // 1. Verify that all group expenses are settled (net balances for all members are 0)
+    const { getGroupBalances } = require('../services/balanceService');
+    const rawBalances = await getGroupBalances(groupId);
+    const hasUnsettledBalances = rawBalances.some((b) => Math.abs(Number(b.netBalance) || 0) > 0.01);
+
+    if (hasUnsettledBalances) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot delete group with unsettled balances. All members must settle up (balance = ₹0.00) before deleting.',
       });
-      const expenseIds = expenses.map((e) => e.id);
+    }
 
-      await tx.expenseSplit.deleteMany({ where: { expenseId: { in: expenseIds } } });
-      await tx.expense.deleteMany({ where: { groupId } });
-      await tx.joinRequest.deleteMany({ where: { groupId } });
-      await tx.groupMember.deleteMany({ where: { groupId } });
-      await tx.group.delete({ where: { id: groupId } });
+    // 2. Verify there are no pending / unconfirmed payments in progress
+    const pendingSettlement = await prisma.settlement.findFirst({
+      where: {
+        groupId,
+        status: { in: ['pending', 'pending_confirmation'] },
+      },
     });
 
-    return res.status(200).json({ success: true, message: 'Group deleted successfully' });
+    if (pendingSettlement) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot delete group while there are pending payment confirmations. Please resolve all payments first.',
+      });
+    }
+
+    // 3. Soft-delete the group to preserve complete transaction ledger and history
+    const updated = await prisma.group.update({
+      where: { id: groupId },
+      data: {
+        isDeleted: true,
+        deletedAt: new Date(),
+      },
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: 'Group deleted successfully. All transaction records have been archived.',
+      group: updated,
+    });
   } catch (error) {
     console.error('Delete group error:', error);
     next(error);
@@ -541,6 +584,8 @@ router.get('/', async (req, res, next) => {
         name: g.name,
         adminId: g.adminId,
         isAdmin,
+        isDeleted: Boolean(g.isDeleted),
+        deletedAt: g.deletedAt || null,
         createdAt: g.createdAt,
         pendingRequests: isAdmin ? g.joinRequests : [],
         pendingRequestsCount: isAdmin ? g.joinRequests.length : 0,

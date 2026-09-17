@@ -11,9 +11,13 @@ export default function DashboardPage() {
   const [groups, setGroups] = useState([]);
   const [shoppingItems, setShoppingItems] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showJoinModal, setShowJoinModal] = useState(false);
+  const [joinInput, setJoinInput] = useState('');
+  const [joinError, setJoinError] = useState('');
   const [showFABLogModal, setShowFABLogModal] = useState(false);
   const [newGroupName, setNewGroupName] = useState('');
   const [hideNotifBanner, setHideNotifBanner] = useState(() => localStorage.getItem('splitup_hide_notif_banner') === 'true');
@@ -51,6 +55,13 @@ export default function DashboardPage() {
 
   useEffect(() => {
     loadDashboardData();
+
+    // Listen for global settlement events to update dashboard net balances immediately
+    function handleSettlementUpdate() {
+      loadDashboardData();
+    }
+    window.addEventListener('splitup:settlement_updated', handleSettlementUpdate);
+    return () => window.removeEventListener('splitup:settlement_updated', handleSettlementUpdate);
   }, []);
 
   async function handleCreateGroup(e) {
@@ -73,6 +84,29 @@ export default function DashboardPage() {
     } finally {
       setCreating(false);
     }
+  }
+
+  function handleJoinSubmit(e) {
+    e.preventDefault();
+    setJoinError('');
+    const raw = joinInput.trim();
+    if (!raw) return;
+
+    // Support full invite links (e.g., https://domain.com/join/cm123...) or raw group IDs
+    let targetId = raw;
+    if (raw.includes('/join/')) {
+      const parts = raw.split('/join/');
+      targetId = parts[parts.length - 1].split('?')[0].split('#')[0].trim();
+    }
+
+    if (!targetId || targetId === 'undefined') {
+      setJoinError('Please enter a valid Group ID or invite link.');
+      return;
+    }
+
+    setShowJoinModal(false);
+    setJoinInput('');
+    navigate(`/join/${targetId}`);
   }
 
   const allPendingRequests = useMemo(() => {
@@ -358,31 +392,53 @@ export default function DashboardPage() {
 
       {/* ── Section 2: Your Groups ➔ (Matching Wireframe Image 1) ── */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
           <h2 style={{ fontSize: '16px', fontWeight: 800, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
             <span>Your Groups</span>
             <span style={{ color: 'var(--text-muted)' }}>➔</span>
           </h2>
-          <button
-            type="button"
-            className="btn-ghost"
-            onClick={() => setShowCreateModal(true)}
-            style={{ fontSize: '12.5px', fontWeight: 600, padding: '2px 8px' }}
-          >
-            + Create Group
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <button
+              type="button"
+              className="btn-ghost"
+              onClick={() => {
+                setJoinError('');
+                setShowJoinModal(true);
+              }}
+              style={{ fontSize: '12.5px', fontWeight: 600, padding: '4px 10px', background: 'var(--bg-subtle)' }}
+            >
+              🔗 Join Group
+            </button>
+            <button
+              type="button"
+              className="btn-ghost"
+              onClick={() => setShowCreateModal(true)}
+              style={{ fontSize: '12.5px', fontWeight: 600, padding: '4px 10px', background: 'var(--bg-subtle)' }}
+            >
+              + Create Group
+            </button>
+          </div>
         </div>
 
         {groups.length === 0 ? (
           <div className="card" style={{ padding: 'var(--space-8) var(--space-4)', textAlign: 'center', alignItems: 'center' }}>
             <p style={{ margin: '0 0 12px 0' }}>You don't belong to any groups yet.</p>
-            <button
-              type="button"
-              className="btn-primary"
-              onClick={() => setShowCreateModal(true)}
-            >
-              + Create your first group
-            </button>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => setShowJoinModal(true)}
+              >
+                Join with Link or ID
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={() => setShowCreateModal(true)}
+              >
+                + Create your first group
+              </button>
+            </div>
           </div>
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 280px), 1fr))', gap: 'var(--space-3)' }}>
@@ -395,6 +451,7 @@ export default function DashboardPage() {
                   gap: 'var(--space-3)',
                   cursor: 'pointer',
                   transition: 'transform 0.15s ease, border-color 0.15s ease',
+                  opacity: g.isDeleted ? 0.75 : 1,
                 }}
                 onClick={() => navigate(`/groups/${g.id}`)}
               >
@@ -407,11 +464,18 @@ export default function DashboardPage() {
                       {g.name.charAt(0).toUpperCase()}
                     </div>
                     <div>
-                      <strong style={{ fontSize: '14px', color: 'var(--text-primary)', display: 'block' }}>
-                        {g.name}
-                      </strong>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <strong style={{ fontSize: '14px', color: 'var(--text-primary)', display: 'block' }}>
+                          {g.name}
+                        </strong>
+                        {g.isDeleted && (
+                          <span style={{ fontSize: '10.5px', background: 'var(--danger-bg)', color: 'var(--danger-text)', border: '1px solid var(--danger-border)', padding: '1px 6px', borderRadius: 'var(--radius-full)', fontWeight: 600 }}>
+                            Deleted
+                          </span>
+                        )}
+                      </div>
                       <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-                        {g.membersCount || g._count?.members || 1} members
+                        {g.membersCount || g._count?.members || 1} members {g.isDeleted ? '• Archived' : ''}
                       </span>
                     </div>
                   </div>
@@ -441,6 +505,64 @@ export default function DashboardPage() {
         onExpenseAdded={loadDashboardData}
       />
 
+      {/* ── Join Group Modal ── */}
+      {showJoinModal && (
+        <div
+          className="modal-overlay"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowJoinModal(false);
+          }}
+        >
+          <div className="modal-box" style={{ maxWidth: '440px' }}>
+            <button
+              type="button"
+              className="modal-close"
+              onClick={() => setShowJoinModal(false)}
+              aria-label="Close modal"
+            >
+              ✕
+            </button>
+            <div className="card-header">
+              <h2 className="card-title">Join a Group</h2>
+            </div>
+            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', margin: '0 0 12px 0' }}>
+              Paste an invite link or enter a Group ID to request access to an existing group.
+            </p>
+
+            {joinError && <div className="error-text" style={{ marginBottom: '12px' }}>{joinError}</div>}
+
+            <form onSubmit={handleJoinSubmit} className="form-grid">
+              <label className="form-label">
+                Group ID or Invite Link
+                <input
+                  type="text"
+                  placeholder="e.g. cm123... or https://.../join/cm123..."
+                  value={joinInput}
+                  onChange={(e) => setJoinInput(e.target.value)}
+                  autoFocus
+                  required
+                />
+              </label>
+              <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: 'var(--space-2)' }}>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => setShowJoinModal(false)}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="btn-primary"
+                  disabled={!joinInput.trim()}
+                >
+                  Continue to Join ➔
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* ── Create Group Modal ── */}
       {showCreateModal && (

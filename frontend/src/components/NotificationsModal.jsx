@@ -103,6 +103,7 @@ export default function NotificationsModal({ isOpen, onClose, onActionTaken }) {
         )
       );
       if (onActionTaken) onActionTaken();
+      window.dispatchEvent(new CustomEvent('splitup:settlement_updated', { detail: { groupId, settlementId } }));
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to confirm payment');
     } finally {
@@ -127,6 +128,7 @@ export default function NotificationsModal({ isOpen, onClose, onActionTaken }) {
         )
       );
       if (onActionTaken) onActionTaken();
+      window.dispatchEvent(new CustomEvent('splitup:settlement_updated', { detail: { groupId, settlementId } }));
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to reject payment');
     } finally {

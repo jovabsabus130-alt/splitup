@@ -68,6 +68,22 @@ router.post('/groups/:groupId/expenses', async (req, res, next) => {
       });
     }
 
+    const group = await prisma.group.findUnique({
+      where: { id: groupId },
+      select: { id: true, isDeleted: true },
+    });
+
+    if (!group) {
+      return res.status(404).json({ success: false, message: 'Group not found' });
+    }
+
+    if (group.isDeleted) {
+      return res.status(400).json({
+        success: false,
+        message: 'This group is deleted/archived. New transactions cannot be added.',
+      });
+    }
+
     const groupMembership = await prisma.groupMember.findUnique({
       where: {
         userId_groupId: {
