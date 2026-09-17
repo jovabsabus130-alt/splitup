@@ -69,7 +69,7 @@ const resetPasswordSchema = z.object({
   newPassword: z.string().min(6, 'Password must be at least 6 characters'),
 });
 
-// ── Handlers ──────────────────────────────────────────────────────────────────
+const pendingRegistrations = new Map();
 
 async function handleVerifyEmail(req, res, next) {
   try {
@@ -86,6 +86,46 @@ async function handleVerifyEmail(req, res, next) {
     const normalizedEmail = email.toLowerCase().trim();
     const cleanOtp = String(otp).trim();
 
+    // 1. Check if there is a pending registration waiting for OTP verification
+    const pending = pendingRegistrations.get(normalizedEmail);
+    if (pending) {
+      if (pending.expiresAt < Date.now() || pending.otp !== cleanOtp) {
+        return res.status(400).json({ success: false, message: 'Invalid or expired verification code' });
+      }
+
+      // Check race condition if user was created concurrently
+      const existing = await prisma.user.findUnique({ where: { email: normalizedEmail } });
+      let user;
+      if (existing) {
+        user = await prisma.user.update({
+          where: { id: existing.id },
+          data: { emailVerified: true },
+        });
+      } else {
+        // Create user record in the database ONLY now after OTP is verified
+        user = await prisma.user.create({
+          data: {
+            name: pending.name,
+            email: pending.email,
+            passwordHash: pending.passwordHash,
+            phone: pending.phone,
+            upiId: pending.upiId,
+            emailVerified: true,
+          },
+        });
+      }
+
+      pendingRegistrations.delete(normalizedEmail);
+      const token = signToken(user.id);
+      return res.status(200).json({
+        success: true,
+        message: 'Email verified successfully',
+        user: userPublic(user),
+        token,
+      });
+    }
+
+    // 2. Check existing user in database (e.g. from prior flows or OTP table)
     const user = await prisma.user.findUnique({
       where: { email: normalizedEmail },
       include: {
@@ -148,15 +188,33 @@ async function handleResendVerification(req, res, next) {
     const { email } = parsed.data;
     const normalizedEmail = email.toLowerCase().trim();
 
-    const user = await prisma.user.findUnique({
-      where: { email: normalizedEmail },
-    });
-
-    // Uniform response to prevent email enumeration attacks
     const genericSuccessResponse = {
       success: true,
       message: 'If an account exists with that email, a verification code has been sent.',
     };
+
+    // 1. Check pending registrations
+    const pending = pendingRegistrations.get(normalizedEmail);
+    if (pending) {
+      const code = generate6DigitOtp();
+      pending.otp = code;
+      pending.expiresAt = Date.now() + OTP_EXPIRY_MS;
+
+      console.log(`\n========================================\n🔐 [SPLITUP OTP] Verification Code for ${normalizedEmail}: ${code}\n========================================\n`);
+
+      if (process.env.SMTP_USER && process.env.SMTP_PASS) {
+        sendOtpEmail(normalizedEmail, pending.name, code).catch((mailErr) => {
+          console.error('Failed to send resend verification email:', mailErr.message);
+        });
+      }
+
+      return res.status(200).json(genericSuccessResponse);
+    }
+
+    // 2. Check existing database user
+    const user = await prisma.user.findUnique({
+      where: { email: normalizedEmail },
+    });
 
     if (!user) {
       return res.status(200).json(genericSuccessResponse);
@@ -212,59 +270,29 @@ router.post('/register', async (req, res, next) => {
     const { name, email, password, phone, upiId } = parsed.data;
     const normalizedEmail = email.toLowerCase().trim();
 
-    // Check existing user
+    // Check if user is already registered and verified
     const existingUser = await prisma.user.findUnique({
       where: { email: normalizedEmail },
       select: { id: true, name: true, emailVerified: true },
     });
 
-    let user;
-    const passwordHash = await bcrypt.hash(password, 10);
-
-    if (existingUser) {
-      if (existingUser.emailVerified) {
-        return res.status(409).json({ success: false, message: 'This email is already registered and verified. Please sign in.' });
-      }
-      // If user started registration previously but never verified, update details and issue fresh OTP
-      user = await prisma.user.update({
-        where: { id: existingUser.id },
-        data: {
-          name,
-          passwordHash,
-          phone: phone || null,
-          upiId: upiId || null,
-        },
-      });
-    } else {
-      user = await prisma.user.create({
-        data: {
-          name,
-          email: normalizedEmail,
-          passwordHash,
-          phone: phone || null,
-          upiId: upiId || null,
-          emailVerified: false,
-        },
-      });
+    if (existingUser && existingUser.emailVerified) {
+      return res.status(409).json({ success: false, message: 'This email is already registered and verified. Please sign in.' });
     }
 
-    // Invalidate any existing unused OTPs
-    await prisma.otpCode.updateMany({
-      where: { userId: user.id, used: false },
-      data: { used: true },
-    });
-
-    // Generate secure 6-digit OTP code (expires in 10 minutes)
+    const passwordHash = await bcrypt.hash(password, 10);
     const code = generate6DigitOtp();
-    const expiresAt = new Date(Date.now() + OTP_EXPIRY_MS);
+    const expiresAt = Date.now() + OTP_EXPIRY_MS;
 
-    await prisma.otpCode.create({
-      data: {
-        userId: user.id,
-        code,
-        expiresAt,
-        used: false,
-      },
+    // Save into pending registrations store (User is NOT yet created in the database)
+    pendingRegistrations.set(normalizedEmail, {
+      name,
+      email: normalizedEmail,
+      passwordHash,
+      phone: phone || null,
+      upiId: upiId || null,
+      otp: code,
+      expiresAt,
     });
 
     console.log(`\n========================================\n🔐 [SPLITUP OTP] Registration Code for ${normalizedEmail}: ${code}\n========================================\n`);
@@ -311,14 +339,33 @@ router.post('/forgot-password', async (req, res, next) => {
     const { email } = parsed.data;
     const normalizedEmail = email.toLowerCase().trim();
 
-    const user = await prisma.user.findUnique({
-      where: { email: normalizedEmail },
-    });
-
     const genericSuccessResponse = {
       success: true,
       message: 'If an account exists with that email, a password reset code has been sent.',
     };
+
+    // 1. Check pending registrations store
+    const pending = pendingRegistrations.get(normalizedEmail);
+    if (pending) {
+      const code = generate6DigitOtp();
+      pending.otp = code;
+      pending.expiresAt = Date.now() + OTP_EXPIRY_MS;
+
+      console.log(`\n========================================\n🔐 [SPLITUP OTP] Password Reset Code for ${normalizedEmail}: ${code}\n========================================\n`);
+
+      if (process.env.SMTP_USER && process.env.SMTP_PASS) {
+        sendPasswordResetOtpEmail(normalizedEmail, pending.name, code).catch((mailErr) => {
+          console.error('Failed to send password reset OTP email:', mailErr.message);
+        });
+      }
+
+      return res.status(200).json(genericSuccessResponse);
+    }
+
+    // 2. Check existing user in database
+    const user = await prisma.user.findUnique({
+      where: { email: normalizedEmail },
+    });
 
     // Always respond with generic success to prevent user enumeration attacks
     if (!user) {
@@ -374,7 +421,35 @@ router.post('/reset-password', async (req, res, next) => {
 
     const { email, otp, newPassword } = parsed.data;
     const normalizedEmail = email.toLowerCase().trim();
+    const cleanOtp = String(otp).trim();
 
+    // 1. Check pending registrations store
+    const pending = pendingRegistrations.get(normalizedEmail);
+    if (pending) {
+      if (pending.expiresAt < Date.now() || pending.otp !== cleanOtp) {
+        return res.status(400).json({ success: false, message: 'Invalid or expired reset code' });
+      }
+
+      const passwordHash = await bcrypt.hash(newPassword, 10);
+      const user = await prisma.user.create({
+        data: {
+          name: pending.name,
+          email: pending.email,
+          passwordHash,
+          phone: pending.phone,
+          upiId: pending.upiId,
+          emailVerified: true,
+        },
+      });
+
+      pendingRegistrations.delete(normalizedEmail);
+      return res.status(200).json({
+        success: true,
+        message: 'Password has been reset successfully. You can now sign in.',
+      });
+    }
+
+    // 2. Check existing database user
     const user = await prisma.user.findUnique({
       where: { email: normalizedEmail },
       include: {
@@ -395,7 +470,7 @@ router.post('/reset-password', async (req, res, next) => {
     }
 
     const latestOtp = user.otpCodes[0];
-    if (!latestOtp || latestOtp.code !== otp.trim()) {
+    if (!latestOtp || latestOtp.code !== cleanOtp) {
       return res.status(400).json({ success: false, message: 'Invalid or expired reset code' });
     }
 

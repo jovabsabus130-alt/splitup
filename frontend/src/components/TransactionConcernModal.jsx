@@ -148,72 +148,74 @@ export default function TransactionConcernModal({ groupId, expense, currentUserI
         {error && <div className="error-text" style={{ marginTop: 'var(--space-3)' }}>{error}</div>}
         {successMsg && <div className="success-banner" style={{ marginTop: 'var(--space-3)', padding: '8px 12px', fontSize: '13px', borderRadius: 'var(--radius-sm)' }}>{successMsg}</div>}
 
-        {/* ── Action to Raise a Concern ── */}
-        <div style={{ marginTop: 'var(--space-4)' }}>
-          {!showRaiseForm ? (
-            <button
-              type="button"
-              className="btn-secondary"
-              style={{ width: '100%', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '6px' }}
-              onClick={() => setShowRaiseForm(true)}
-            >
-              <span>🚩</span>
-              <span>Raise a Concern on this Transaction</span>
-            </button>
-          ) : (
-            <form onSubmit={handleRaiseConcern} className="card" style={{ padding: 'var(--space-4)', background: 'var(--bg-subtle)' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                <strong style={{ fontSize: '13.5px', color: 'var(--text-primary)' }}>Raise a Concern / Flag</strong>
-                <button
-                  type="button"
-                  className="btn-ghost"
-                  style={{ height: '24px', fontSize: '12px', padding: '0 6px' }}
-                  onClick={() => setShowRaiseForm(false)}
-                >
-                  Cancel
-                </button>
-              </div>
-              <p style={{ fontSize: '12.5px', color: 'var(--text-secondary)', marginBottom: '8px' }}>
-                Describe what seems incorrect (e.g. split proportion, item price, unauthorized expense). The payer will be notified immediately.
-              </p>
-              <textarea
-                placeholder="Explain the issue with this expense…"
-                value={reason}
-                onChange={(e) => setReason(e.target.value)}
-                required
-                rows={3}
-                style={{
-                  width: '100%',
-                  padding: '8px 12px',
-                  borderRadius: 'var(--radius-sm)',
-                  border: '1px solid var(--border-subtle)',
-                  fontSize: '13px',
-                  fontFamily: 'inherit',
-                  resize: 'vertical',
-                  background: 'var(--bg-surface)',
-                  color: 'var(--text-primary)',
-                }}
-              />
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '8px' }}>
-                <button
-                  type="button"
-                  className="btn-ghost"
-                  onClick={() => setShowRaiseForm(false)}
-                  disabled={submittingConcern}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="btn-primary"
-                  disabled={submittingConcern || !reason.trim()}
-                >
-                  {submittingConcern ? 'Submitting…' : 'Submit Concern 🚩'}
-                </button>
-              </div>
-            </form>
-          )}
-        </div>
+        {/* ── Action to Raise a Concern (Non-payers only) ── */}
+        {!isPayer && (
+          <div style={{ marginTop: 'var(--space-4)' }}>
+            {!showRaiseForm ? (
+              <button
+                type="button"
+                className="btn-secondary"
+                style={{ width: '100%', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '6px' }}
+                onClick={() => setShowRaiseForm(true)}
+              >
+                <span>🚩</span>
+                <span>Raise a Concern on this Transaction</span>
+              </button>
+            ) : (
+              <form onSubmit={handleRaiseConcern} className="card" style={{ padding: 'var(--space-4)', background: 'var(--bg-subtle)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <strong style={{ fontSize: '13.5px', color: 'var(--text-primary)' }}>Raise a Concern / Flag</strong>
+                  <button
+                    type="button"
+                    className="btn-ghost"
+                    style={{ height: '24px', fontSize: '12px', padding: '0 6px' }}
+                    onClick={() => setShowRaiseForm(false)}
+                  >
+                    Cancel
+                  </button>
+                </div>
+                <p style={{ fontSize: '12.5px', color: 'var(--text-secondary)', marginBottom: '8px' }}>
+                  Describe what seems incorrect (e.g. split proportion, item price, unauthorized expense). The payer will be notified immediately.
+                </p>
+                <textarea
+                  placeholder="Explain the issue with this expense…"
+                  value={reason}
+                  onChange={(e) => setReason(e.target.value)}
+                  required
+                  rows={3}
+                  style={{
+                    width: '100%',
+                    padding: '8px 12px',
+                    borderRadius: 'var(--radius-sm)',
+                    border: '1px solid var(--border-subtle)',
+                    fontSize: '13px',
+                    fontFamily: 'inherit',
+                    resize: 'vertical',
+                    background: 'var(--bg-surface)',
+                    color: 'var(--text-primary)',
+                  }}
+                />
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '8px' }}>
+                  <button
+                    type="button"
+                    className="btn-ghost"
+                    onClick={() => setShowRaiseForm(false)}
+                    disabled={submittingConcern}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="btn-primary"
+                    disabled={submittingConcern || !reason.trim()}
+                  >
+                    {submittingConcern ? 'Submitting…' : 'Submit Concern 🚩'}
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
+        )}
 
         {/* ── Concerns List / Audit Timeline ── */}
         <div style={{ marginTop: 'var(--space-4)' }}>

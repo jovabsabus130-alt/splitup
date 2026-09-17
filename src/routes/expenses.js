@@ -312,6 +312,14 @@ router.put('/groups/:groupId/expenses/:expenseId', async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Expense not found' });
     }
 
+    // Only the creator / payer of the transaction can edit it
+    if (existing.paidById !== req.userId) {
+      return res.status(403).json({
+        success: false,
+        message: 'Only the member who created this transaction can edit it.',
+      });
+    }
+
     // Strictly enforce single-edit rule
     if (existing.isEdited) {
       return res.status(409).json({
@@ -549,6 +557,171 @@ router.put('/groups/:groupId/expenses/:expenseId', async (req, res, next) => {
     next(error);
   }
 });
+
+// ── DELETE /groups/:groupId/expenses/:expenseId ───────────────────────────────
+// Delete an accidental duplicate or errant transaction.
+// Enforces authorization: ONLY the transaction creator/payer (paidById) can delete this transaction.
+async function handleDeleteExpense(req, res, next) {
+  try {
+    const { groupId, expenseId } = req.params;
+
+    // 1. Fetch existing expense
+    const existing = await prisma.expense.findUnique({
+      where: { id: expenseId },
+      include: {
+        paidBy: { select: { id: true, name: true, email: true } },
+        group: { select: { id: true, name: true } },
+        splits: {
+          include: {
+            user: { select: { id: true, name: true, email: true } },
+          },
+        },
+      },
+    });
+
+    const targetGroupId = groupId || existing?.groupId;
+
+    if (!existing || (groupId && existing.groupId !== groupId)) {
+      return res.status(404).json({ success: false, message: 'Expense not found' });
+    }
+
+    // 2. Verify authenticated user is a group member
+    const membership = await prisma.groupMember.findUnique({
+      where: {
+        userId_groupId: {
+          userId: req.userId,
+          groupId: targetGroupId,
+        },
+      },
+    });
+
+    if (!membership) {
+      return res.status(403).json({ success: false, message: 'You are not a member of this group' });
+    }
+
+    // 3. Strict Authorization: ONLY the creator/payer can delete this transaction
+    if (existing.paidById !== req.userId) {
+      return res.status(403).json({
+        success: false,
+        message: 'Only the member who created this transaction can delete it.',
+      });
+    }
+
+    if (existing.isDeleted) {
+      return res.status(400).json({
+        success: false,
+        message: 'This transaction has already been deleted.',
+      });
+    }
+
+    const oldAmount = Number(existing.amount);
+    const reason = (req.body && typeof req.body.reason === 'string' && req.body.reason.trim())
+      ? req.body.reason.trim()
+      : 'Accidental duplicate / errant transaction deleted by creator';
+
+    // 4. Atomic soft deletion + audit history preservation
+    const deletedDate = new Date();
+    await prisma.$transaction(async (tx) => {
+      // Mark expense as deleted
+      await tx.expense.update({
+        where: { id: expenseId },
+        data: {
+          isDeleted: true,
+          deletedAt: deletedDate,
+        },
+      });
+
+      // Record in EditHistory for complete audit trail
+      await tx.expenseEditHistory.create({
+        data: {
+          expenseId,
+          editedById: req.userId,
+          changes: [
+            {
+              field: 'Status',
+              from: 'Active',
+              to: 'Deleted 🗑️',
+            },
+            {
+              field: 'Amount',
+              from: `₹${oldAmount.toFixed(2)}`,
+              to: '₹0.00 (Deleted/Voided)',
+            },
+            {
+              field: 'Reason',
+              from: 'Active Transaction',
+              to: reason,
+            },
+          ],
+          previousData: {
+            amount: oldAmount,
+            category: existing.category,
+            description: existing.description || null,
+            paidById: existing.paidById,
+            createdAt: existing.createdAt,
+            deletedAt: deletedDate,
+            deletedById: req.userId,
+            isDeleted: true,
+            splits: existing.splits.map((s) => ({
+              userId: s.userId,
+              share: Number(s.share),
+              userName: s.user?.name || null,
+            })),
+          },
+        },
+      });
+    });
+
+    // 5. Notify group members (excluding the creator who deleted it)
+    const groupMembers = await prisma.groupMember.findMany({
+      where: { groupId: targetGroupId },
+      select: { userId: true },
+    });
+
+    const recipientIds = Array.from(new Set(groupMembers.map((m) => m.userId))).filter(
+      (uid) => uid !== req.userId
+    );
+
+    if (recipientIds.length > 0) {
+      const expenseTitle = existing.description || existing.category;
+      const amountStr = oldAmount.toFixed(2);
+      const creatorName = existing.paidBy?.name || 'The creator';
+      const groupName = existing.group?.name || 'Group';
+
+      await prisma.notification.createMany({
+        data: recipientIds.map((uid) => ({
+          userId: uid,
+          groupId: targetGroupId,
+          type: 'expense_deleted',
+          title: 'Transaction Deleted',
+          message: `${creatorName} deleted transaction "${expenseTitle}" (₹${amountStr}) in ${groupName}. Balances have been updated.`,
+          data: {
+            expenseId,
+            groupId: targetGroupId,
+            groupName,
+            amount: oldAmount,
+            category: existing.category,
+            description: existing.description,
+            deletedAt: deletedDate,
+          },
+        })),
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Transaction has been deleted successfully and archived in history.',
+      deletedExpenseId: expenseId,
+      previousAmount: oldAmount,
+    });
+  } catch (error) {
+    console.error('Delete expense error:', error);
+    next(error);
+  }
+}
+
+router.delete('/groups/:groupId/expenses/:expenseId', handleDeleteExpense);
+router.delete('/expenses/:expenseId', handleDeleteExpense);
 
 const createConcernSchema = z.object({
   reason: z.string().trim().min(1, 'Reason is required'),

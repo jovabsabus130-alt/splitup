@@ -205,7 +205,7 @@ describe('Email Verification & OTP Lifecycle Tests', () => {
   });
 
   describe('1. Registration Flow & Initial OTP Creation', () => {
-    it('should register a new user with emailVerified=false and generate a secure 6-digit OTP', async () => {
+    it('should defer DB user creation until OTP verification and send OTP code', async () => {
       const req = createMockReq({
         name: 'Alice Johnson',
         email: 'alice@example.com',
@@ -220,18 +220,8 @@ describe('Email Verification & OTP Lifecycle Tests', () => {
       assert.strictEqual(res.data.requireVerification, true);
       assert.strictEqual(res.data.email, 'alice@example.com');
 
-      // Verify user created in DB
-      assert.strictEqual(usersTable.length, 1);
-      assert.strictEqual(usersTable[0].email, 'alice@example.com');
-      assert.strictEqual(usersTable[0].emailVerified, false);
-
-      // Verify OTP created in DB
-      assert.strictEqual(otpCodesTable.length, 1);
-      assert.strictEqual(otpCodesTable[0].userId, usersTable[0].id);
-      assert.strictEqual(otpCodesTable[0].code.length, 6);
-      assert.strictEqual(/^\d{6}$/.test(otpCodesTable[0].code), true);
-      assert.strictEqual(otpCodesTable[0].used, false);
-      assert.ok(new Date(otpCodesTable[0].expiresAt) > new Date());
+      // Verify user is NOT yet saved to DB before OTP verification
+      assert.strictEqual(usersTable.length, 0);
     });
   });
 

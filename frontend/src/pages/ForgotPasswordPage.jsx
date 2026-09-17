@@ -1,10 +1,12 @@
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 
 export default function ForgotPasswordPage() {
   const navigate = useNavigate();
-  const [email, setEmail] = useState('');
+  const location = useLocation();
+  const initialEmail = location.state?.email || sessionStorage.getItem('pending_reset_email') || '';
+  const [email, setEmail] = useState(initialEmail);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);

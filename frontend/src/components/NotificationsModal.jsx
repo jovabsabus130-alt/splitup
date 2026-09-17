@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
+import { useNavigation } from '../lib/NavigationContext';
 
 function getNotificationIcon(type) {
   switch (type) {
@@ -38,6 +39,8 @@ export default function NotificationsModal({ isOpen, onClose, onActionTaken }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [actionLoading, setActionLoading] = useState({});
+
+  const { notificationPermission, requestPermission, sendTestNotification } = useNavigation();
 
   async function loadNotifications() {
     try {
@@ -166,6 +169,55 @@ export default function NotificationsModal({ isOpen, onClose, onActionTaken }) {
                 onClick={handleMarkAllRead}
               >
                 Mark all read
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* System Notification Bar Device Alerts Banner */}
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: '12px',
+          padding: '10px 14px',
+          borderRadius: 'var(--radius-md)',
+          background: notificationPermission === 'granted' ? 'rgba(16, 185, 129, 0.08)' : 'rgba(99, 102, 241, 0.08)',
+          border: `1px solid ${notificationPermission === 'granted' ? 'rgba(16, 185, 129, 0.25)' : 'rgba(99, 102, 241, 0.25)'}`,
+          marginTop: 'var(--space-1)',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ fontSize: '16px' }}>{notificationPermission === 'granted' ? '🔔' : '🔕'}</span>
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
+              <span style={{ fontSize: '12.5px', fontWeight: 700, color: 'var(--text-primary)' }}>
+                {notificationPermission === 'granted' ? 'Device Notification Bar Active' : 'Notification Bar Alerts'}
+              </span>
+              <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+                {notificationPermission === 'granted'
+                  ? 'Receive alerts even when SplitUp is in the background'
+                  : 'Get alerts in device notification bar when tab is closed'}
+              </span>
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
+            {notificationPermission !== 'granted' ? (
+              <button
+                type="button"
+                className="btn-primary"
+                style={{ fontSize: '12px', padding: '4px 10px', minHeight: '30px' }}
+                onClick={requestPermission}
+              >
+                Turn On
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="btn-secondary"
+                style={{ fontSize: '11.5px', padding: '4px 8px', minHeight: '30px' }}
+                onClick={sendTestNotification}
+                title="Send a test notification to your system notification bar"
+              >
+                Test Alert
               </button>
             )}
           </div>

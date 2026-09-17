@@ -166,6 +166,8 @@ async function getPersonalAnalytics({ userId, period = 'month', date }) {
   trendBuckets.forEach((b) => trendMap.set(b.key, 0));
 
   for (const split of splits) {
+    if (split.expense?.isDeleted) continue;
+
     const share = Number(split.share);
     totalSpending += share;
 
@@ -354,6 +356,8 @@ async function getGroupAnalytics({ userId, groupId, period = 'month', date }) {
   });
 
   for (const exp of expenses) {
+    if (exp.isDeleted) continue;
+
     const expAmount = Number(exp.amount);
     totalGroupSpending += expAmount;
 

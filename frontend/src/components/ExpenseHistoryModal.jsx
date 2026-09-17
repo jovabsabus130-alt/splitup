@@ -47,17 +47,54 @@ export default function ExpenseHistoryModal({ groupId, expense, onClose }) {
 
         <div className="card-header" style={{ borderBottom: '1px solid var(--border-subtle)', paddingBottom: 'var(--space-3)' }}>
           <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <h2 id="history-modal-title" className="card-title">Transaction Edit History</h2>
-              <span className="admin-pill" style={{ background: 'var(--warning-bg)', color: 'var(--warning-text)', borderColor: 'var(--warning-border)' }}>
-                {history.length} {history.length === 1 ? 'Edit' : 'Edits'} Recorded
-              </span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+              <h2 id="history-modal-title" className="card-title">
+                {expense.isDeleted ? '🗑️ Deleted Transaction Audit History' : 'Transaction Edit History'}
+              </h2>
+              {expense.isDeleted ? (
+                <span className="admin-pill" style={{ background: 'var(--danger-bg)', color: 'var(--danger-text)', borderColor: 'var(--danger-border)', fontWeight: 700 }}>
+                  DELETED / VOIDED 🗑️
+                </span>
+              ) : (
+                <span className="admin-pill" style={{ background: 'var(--warning-bg)', color: 'var(--warning-text)', borderColor: 'var(--warning-border)' }}>
+                  {history.length} {history.length === 1 ? 'Edit' : 'Edits'} Recorded
+                </span>
+              )}
             </div>
-            <div className="card-subtitle">
-              {expense.description || expense.category} &bull; Current Value: <strong>₹{Number(expense.amount).toFixed(2)}</strong>
+            <div className="card-subtitle" style={{ marginTop: '4px' }}>
+              {expense.description || expense.category} &bull; {expense.isDeleted ? (
+                <span>Previous Amount: <strong style={{ color: 'var(--danger)', textDecoration: 'line-through' }}>₹{Number(expense.amount).toFixed(2)}</strong> (Voided)</span>
+              ) : (
+                <span>Current Value: <strong>₹{Number(expense.amount).toFixed(2)}</strong></span>
+              )}
             </div>
           </div>
         </div>
+
+        {expense.isDeleted && (
+          <div
+            style={{
+              marginTop: 'var(--space-3)',
+              padding: '10px 14px',
+              backgroundColor: 'var(--danger-bg)',
+              border: '1px solid var(--danger-border)',
+              borderRadius: 'var(--radius-sm)',
+              color: 'var(--danger-text)',
+              fontSize: '12.5px',
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: '8px',
+            }}
+          >
+            <span style={{ fontSize: '16px' }}>⚠️</span>
+            <div>
+              <strong>This transaction was deleted by its creator.</strong>
+              <div style={{ marginTop: '2px', opacity: 0.9 }}>
+                It is excluded from all group balances and settlement calculations. The original amount, category, and split allocations are archived below for transparency and audit accountability.
+              </div>
+            </div>
+          </div>
+        )}
 
         {error && <div className="error-text" style={{ marginTop: 'var(--space-3)' }}>{error}</div>}
 

@@ -11,6 +11,7 @@ const TECHNICAL_PATTERNS = [
   /p200\d/i,
   /p201\d/i,
   /p202\d/i,
+  /p100\d/i,
   /sqlite/i,
   /postgres/i,
   /mysql/i,
@@ -54,19 +55,20 @@ export function sanitizeErrorMessage(rawMessage, fallback = 'Unable to complete 
   // If technical tokens, database errors, or stack traces are present
   for (const pattern of TECHNICAL_PATTERNS) {
     if (pattern.test(trimmed)) {
-      if (/network|econnrefused|failed to fetch/i.test(trimmed)) {
-        return 'Unable to connect to the server. Please check your internet connection.';
+      if (/network|econnrefused|econnreset|failed to fetch|can't reach database|cannot reach database|database server|unreachable|p1001|p1000|p1002/i.test(trimmed)) {
+        return 'Unable to connect to the database or server. Please check your internet connection and try again.';
       }
       if (/jwt|token|signature|session/i.test(trimmed)) {
         return 'Your session has expired. Please sign in again to continue.';
       }
-      if (/unique|duplicate|already exists/i.test(trimmed)) {
+      // Check for true duplicate record or unique constraint violations, ignoring function names like findUnique()
+      if (/(unique constraint|duplicate key|already exists|p2002)/i.test(trimmed) && !/findunique/i.test(trimmed)) {
         return 'An item or account with these details is already registered.';
       }
-      if (/not found/i.test(trimmed)) {
+      if (/not found|p2025/i.test(trimmed)) {
         return 'The requested record or item could not be found.';
       }
-      if (/timeout/i.test(trimmed)) {
+      if (/timeout|etimedout/i.test(trimmed)) {
         return 'The server took too long to respond. Please try again in a moment.';
       }
       return 'A server issue occurred while processing your request. Please try again shortly.';
@@ -101,7 +103,7 @@ export function formatErrorMessage(err, fallback = 'Unable to complete this acti
   if (
     err.code === 'ERR_NETWORK' ||
     err.message === 'Network Error' ||
-    (!err.response && (err.code === 'ECONNABORTED' || err.message?.includes('timeout') || err.message?.includes('Network')))
+    (!err.response && (err.code === 'ECONNABORTED' || err.message?.includes('timeout') || err.message?.includes('Network') || err.message?.includes("Can't reach database")))
   ) {
     return 'Unable to connect to SplitUp servers. Please check your network connection.';
   }
@@ -151,6 +153,8 @@ export function formatErrorMessage(err, fallback = 'Unable to complete this acti
         return 'The submitted data could not be processed. Please verify your entries.';
       case 429:
         return 'Too many requests. Please wait a moment before trying again.';
+      case 503:
+        return 'The service is temporarily unavailable. Please try again shortly.';
       default:
         if (status >= 500) {
           return 'The server encountered an issue while processing your request. Please try again shortly.';

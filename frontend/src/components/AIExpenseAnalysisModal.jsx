@@ -14,7 +14,7 @@ const CATEGORY_COLORS = [
   '#6366f1', // indigo
 ];
 
-export default function AIExpenseAnalysisModal({ onClose, defaultGroupId = null }) {
+export default function AIExpenseAnalysisModal({ isOpen = true, onClose, defaultGroupId = null }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [selectedMonth, setSelectedMonth] = useState('');
@@ -44,8 +44,22 @@ export default function AIExpenseAnalysisModal({ onClose, defaultGroupId = null 
   }
 
   useEffect(() => {
-    loadAnalysis();
-  }, [defaultGroupId]);
+    if (isOpen) {
+      loadAnalysis();
+    }
+  }, [isOpen, defaultGroupId]);
+
+  useEffect(() => {
+    function handleKeyDown(e) {
+      if (e.key === 'Escape' && isOpen && onClose) {
+        onClose();
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
+
+  if (!isOpen) return null;
 
   function handleMonthChange(newMonth) {
     setSelectedMonth(newMonth);
@@ -199,7 +213,7 @@ export default function AIExpenseAnalysisModal({ onClose, defaultGroupId = null 
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)', marginTop: 'var(--space-4)' }}>
             {/* ── Summary Stats ── */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--space-3)' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 160px), 1fr))', gap: 'var(--space-3)' }}>
               <div
                 style={{
                   background: 'var(--bg-subtle)',
@@ -298,7 +312,7 @@ export default function AIExpenseAnalysisModal({ onClose, defaultGroupId = null 
                 </div>
               ) : (
                 /* ── Donut Chart View ── */
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-4)', alignItems: 'center' }}>
+                <div className="ai-donut-chart-container">
                   <div style={{ display: 'flex', justifyContent: 'center' }}>
                     <svg viewBox="0 0 120 120" width="160" height="160" style={{ transform: 'rotate(-90deg)' }}>
                       {(() => {

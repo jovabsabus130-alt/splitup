@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import ExpenseHistoryModal from '../components/ExpenseHistoryModal';
 import TransactionConcernModal from '../components/TransactionConcernModal';
 import api from '../lib/api';
 
@@ -22,6 +23,7 @@ export default function HistoryPage() {
   const [expandedTxId, setExpandedTxId] = useState(null);
   const [currentUserId, setCurrentUserId] = useState(null);
   const [concernExpense, setConcernExpense] = useState(null);
+  const [historyExpense, setHistoryExpense] = useState(null);
 
   useEffect(() => {
     const userStr = localStorage.getItem('splitup_user');
@@ -171,7 +173,7 @@ export default function HistoryPage() {
           onSubmit={handleSearchSubmit}
           style={{
             display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 160px), 1fr))',
             gap: 'var(--space-3)',
             alignItems: 'end',
           }}
@@ -261,7 +263,7 @@ export default function HistoryPage() {
         <div
           style={{
             display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 160px), 1fr))',
             gap: 'var(--space-3)',
           }}
         >
@@ -350,6 +352,10 @@ export default function HistoryPage() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
           {transactions.map((tx) => {
             const isExpanded = expandedTxId === tx.id;
+            const isDeleted = Boolean(tx.isDeleted);
+            const isEdited = !isDeleted && Boolean(tx.isEdited);
+            const isUserPayer = Boolean(tx.payer?.isYou);
+            const hasAuditHistory = Boolean(isDeleted || tx.isEdited || (tx.editHistory && tx.editHistory.length > 0));
             const formattedDate = new Date(tx.date || tx.createdAt).toLocaleDateString(undefined, {
               year: 'numeric',
               month: 'short',
@@ -363,9 +369,10 @@ export default function HistoryPage() {
                 style={{
                   padding: 'var(--space-4)',
                   gap: 'var(--space-3)',
-                  backgroundColor: 'var(--bg-surface)',
-                  border: '1px solid var(--border-subtle)',
+                  backgroundColor: isDeleted ? 'var(--bg-subtle)' : 'var(--bg-surface)',
+                  border: isDeleted ? '1px dashed var(--danger-border)' : '1px solid var(--border-subtle)',
                   borderRadius: 'var(--radius-md)',
+                  opacity: isDeleted ? 0.85 : 1,
                   transition: 'border-color 0.15s ease, box-shadow 0.15s ease',
                 }}
               >
@@ -391,10 +398,29 @@ export default function HistoryPage() {
                       <span>{tx.group.name}</span>
                     </Link>
 
-                    <span className="category-tag">{tx.category}</span>
+                    <span className="category-tag" style={isDeleted ? { opacity: 0.7 } : {}}>{tx.category}</span>
 
-                    {tx.isEdited && (
-                      <span
+                    {isDeleted ? (
+                      <button
+                        type="button"
+                        className="admin-pill"
+                        style={{
+                          fontSize: '10.5px',
+                          padding: '1px 6px',
+                          background: 'var(--danger-bg)',
+                          color: 'var(--danger-text)',
+                          borderColor: 'var(--danger-border)',
+                          fontWeight: 700,
+                          cursor: 'pointer',
+                        }}
+                        onClick={() => setHistoryExpense(tx)}
+                        title="Click to view deletion audit details"
+                      >
+                        DELETED 🗑️
+                      </button>
+                    ) : isEdited ? (
+                      <button
+                        type="button"
                         className="admin-pill"
                         style={{
                           fontSize: '10.5px',
@@ -402,11 +428,14 @@ export default function HistoryPage() {
                           background: 'var(--warning-bg)',
                           color: 'var(--warning-text)',
                           borderColor: 'var(--warning-border)',
+                          cursor: 'pointer',
                         }}
+                        onClick={() => setHistoryExpense(tx)}
+                        title="Click to view edit history"
                       >
                         Edited 📝
-                      </span>
-                    )}
+                      </button>
+                    ) : null}
 
                     {tx.concerns && tx.concerns.length > 0 && (
                       <button
@@ -429,7 +458,7 @@ export default function HistoryPage() {
                   </div>
 
                   <span style={{ fontSize: '11.5px', color: 'var(--text-muted)' }}>
-                    {formattedDate}
+                    {formattedDate} {isDeleted ? '• (Voided)' : ''}
                   </span>
                 </div>
 
@@ -440,7 +469,8 @@ export default function HistoryPage() {
                       style={{
                         fontSize: '15px',
                         fontWeight: 600,
-                        color: 'var(--text-primary)',
+                        color: isDeleted ? 'var(--text-muted)' : 'var(--text-primary)',
+                        textDecoration: isDeleted ? 'line-through' : 'none',
                         margin: 0,
                         wordBreak: 'break-word',
                       }}
@@ -462,14 +492,15 @@ export default function HistoryPage() {
                       style={{
                         fontSize: '18px',
                         fontWeight: 700,
-                        color: 'var(--text-primary)',
+                        color: isDeleted ? 'var(--danger-text)' : 'var(--text-primary)',
+                        textDecoration: isDeleted ? 'line-through' : 'none',
                         fontVariantNumeric: 'tabular-nums',
                       }}
                     >
                       ₹{tx.amount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </div>
-                    <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-                      Total Expense
+                    <span style={{ fontSize: '11px', color: isDeleted ? 'var(--danger-text)' : 'var(--text-muted)', fontWeight: isDeleted ? 600 : 400 }}>
+                      {isDeleted ? 'Previous Amount (Voided)' : 'Total Expense'}
                     </span>
                   </div>
                 </div>
@@ -481,22 +512,28 @@ export default function HistoryPage() {
                     justifyContent: 'space-between',
                     alignItems: 'center',
                     padding: '8px 12px',
-                    backgroundColor: 'var(--bg-subtle)',
+                    backgroundColor: isDeleted ? 'var(--danger-bg)' : 'var(--bg-subtle)',
                     borderRadius: 'var(--radius-sm)',
-                    border: '1px solid var(--border-subtle)',
+                    border: isDeleted ? '1px solid var(--danger-border)' : '1px solid var(--border-subtle)',
                     flexWrap: 'wrap',
                     gap: 'var(--space-2)',
                   }}
                 >
                   <div style={{ fontSize: '12.5px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <span style={{ color: 'var(--text-secondary)' }}>Your Split Share:</span>
-                    <strong style={{ fontVariantNumeric: 'tabular-nums', color: 'var(--text-primary)' }}>
-                      ₹{tx.userShare.toFixed(2)}
+                    <span style={{ color: isDeleted ? 'var(--danger-text)' : 'var(--text-secondary)' }}>
+                      {isDeleted ? 'Original Split Share:' : 'Your Split Share:'}
+                    </span>
+                    <strong style={{ fontVariantNumeric: 'tabular-nums', color: isDeleted ? 'var(--danger-text)' : 'var(--text-primary)', textDecoration: isDeleted ? 'line-through' : 'none' }}>
+                      ₹{(tx.originalUserShare !== undefined ? tx.originalUserShare : tx.userShare).toFixed(2)}
                     </strong>
                   </div>
 
                   <div style={{ fontSize: '12.5px' }}>
-                    {tx.payer.isYou ? (
+                    {isDeleted ? (
+                      <span style={{ color: 'var(--danger-text)', fontWeight: 600 }}>
+                        ₹0.00 (Transaction Deleted/Voided)
+                      </span>
+                    ) : tx.payer.isYou ? (
                       <span style={{ color: 'var(--success)', fontWeight: 600 }}>
                         +₹{tx.userNet.toFixed(2)} (you get back)
                       </span>
@@ -512,9 +549,9 @@ export default function HistoryPage() {
                   </div>
                 </div>
 
-                {/* ── Actions Row: Toggle Splits, Flag Concern, and Open Group ── */}
+                {/* ── Actions Row: Toggle Splits, Flag Concern, Audit Trail, and Open Group ── */}
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '2px', flexWrap: 'wrap', gap: '8px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
                     <button
                       type="button"
                       className="btn-ghost"
@@ -533,26 +570,74 @@ export default function HistoryPage() {
                       <span>{isExpanded ? '▲ Hide' : '▼ View'} Splits ({tx.participants.length})</span>
                     </button>
 
-                    <button
-                      type="button"
-                      className="btn-ghost"
-                      style={{
-                        height: '28px',
-                        fontSize: '12px',
-                        padding: '0 8px',
-                        color: (tx.concerns && tx.concerns.length > 0) ? 'var(--warning-text)' : 'var(--text-secondary)',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '4px',
-                        borderColor: (tx.concerns && tx.concerns.length > 0) ? 'var(--warning-border)' : 'transparent',
-                        background: (tx.concerns && tx.concerns.length > 0) ? 'var(--warning-bg)' : 'transparent',
-                      }}
-                      onClick={() => setConcernExpense(tx)}
-                      title="Flag or view concerns on this transaction"
-                    >
-                      <span>🚩</span>
-                      <span>{tx.concerns && tx.concerns.length > 0 ? `Concerns (${tx.concerns.length})` : 'Flag'}</span>
-                    </button>
+                    {hasAuditHistory && (
+                      <button
+                        type="button"
+                        className="btn-ghost"
+                        style={{
+                          height: '28px',
+                          fontSize: '12px',
+                          padding: '0 8px',
+                          color: isDeleted ? 'var(--danger-text)' : 'var(--accent-primary)',
+                          borderColor: isDeleted ? 'var(--danger-border)' : 'var(--border-subtle)',
+                          background: isDeleted ? 'var(--danger-bg)' : 'var(--bg-subtle)',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px',
+                        }}
+                        onClick={() => setHistoryExpense(tx)}
+                        title="View complete audit logs and previous states"
+                      >
+                        <span>📜</span>
+                        <span>Audit Trail</span>
+                      </button>
+                    )}
+
+                    {!isDeleted && (
+                      !isUserPayer ? (
+                        <button
+                          type="button"
+                          className="btn-ghost"
+                          style={{
+                            height: '28px',
+                            fontSize: '12px',
+                            padding: '0 8px',
+                            color: (tx.concerns && tx.concerns.length > 0) ? 'var(--warning-text)' : 'var(--text-secondary)',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                            borderColor: (tx.concerns && tx.concerns.length > 0) ? 'var(--warning-border)' : 'transparent',
+                            background: (tx.concerns && tx.concerns.length > 0) ? 'var(--warning-bg)' : 'transparent',
+                          }}
+                          onClick={() => setConcernExpense(tx)}
+                          title="Flag or view concerns on this transaction"
+                        >
+                          <span>🚩</span>
+                          <span>{tx.concerns && tx.concerns.length > 0 ? `Concerns (${tx.concerns.length})` : 'Flag'}</span>
+                        </button>
+                      ) : (tx.concerns && tx.concerns.length > 0) ? (
+                        <button
+                          type="button"
+                          className="btn-ghost"
+                          style={{
+                            height: '28px',
+                            fontSize: '12px',
+                            padding: '0 8px',
+                            color: 'var(--warning-text)',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                            borderColor: 'var(--warning-border)',
+                            background: 'var(--warning-bg)',
+                          }}
+                          onClick={() => setConcernExpense(tx)}
+                          title="View and respond to concerns raised by group members"
+                        >
+                          <span>🚩</span>
+                          <span>Concerns ({tx.concerns.length})</span>
+                        </button>
+                      ) : null
+                    )}
                   </div>
 
                   <Link
@@ -639,6 +724,15 @@ export default function HistoryPage() {
             </div>
           )}
         </div>
+      )}
+
+      {/* ── Expense History Audit Modal ── */}
+      {historyExpense && (
+        <ExpenseHistoryModal
+          groupId={historyExpense.group?.id || selectedGroupId}
+          expense={historyExpense}
+          onClose={() => setHistoryExpense(null)}
+        />
       )}
 
       {/* ── Transaction Concern / Flag Modal ── */}

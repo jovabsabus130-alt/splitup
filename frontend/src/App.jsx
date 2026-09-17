@@ -1,109 +1,121 @@
+import { lazy, Suspense } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import AppLayout from './components/AppLayout';
 import ProtectedRoute from './components/ProtectedRoute';
 import { NavigationProvider } from './lib/NavigationContext';
-import AnalyticsPage from './pages/AnalyticsPage';
-import BalancesPage from './pages/BalancesPage';
-import DashboardPage from './pages/DashboardPage';
-import ForgotPasswordPage from './pages/ForgotPasswordPage';
-import GroupDetailPage from './pages/GroupDetailPage';
-import HistoryPage from './pages/HistoryPage';
-import JoinRequestPage from './pages/JoinRequestPage';
-import LoginPage from './pages/LoginPage';
-import RegisterPage from './pages/RegisterPage';
-import ResetPasswordPage from './pages/ResetPasswordPage';
-import VerifyEmailPage from './pages/VerifyEmailPage';
+
+const AnalyticsPage = lazy(() => import('./pages/AnalyticsPage'));
+const BalancesPage = lazy(() => import('./pages/BalancesPage'));
+const DashboardPage = lazy(() => import('./pages/DashboardPage'));
+const ForgotPasswordPage = lazy(() => import('./pages/ForgotPasswordPage'));
+const GroupDetailPage = lazy(() => import('./pages/GroupDetailPage'));
+const HistoryPage = lazy(() => import('./pages/HistoryPage'));
+const JoinRequestPage = lazy(() => import('./pages/JoinRequestPage'));
+const LoginPage = lazy(() => import('./pages/LoginPage'));
+const RegisterPage = lazy(() => import('./pages/RegisterPage'));
+const ResetPasswordPage = lazy(() => import('./pages/ResetPasswordPage'));
+const VerifyEmailPage = lazy(() => import('./pages/VerifyEmailPage'));
+
+function PageFallback() {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '60vh', width: '100%' }}>
+      <div className="spinner" style={{ width: '28px', height: '28px' }} />
+    </div>
+  );
+}
 
 export default function App() {
   return (
     <NavigationProvider>
-      <Routes>
-        <Route path="/" element={<Navigate to="/dashboard" replace />} />
-        <Route path="/login" element={<LoginPage />} />
-        <Route path="/register" element={<RegisterPage />} />
-        <Route path="/forgot-password" element={<ForgotPasswordPage />} />
-        <Route path="/reset-password" element={<ResetPasswordPage />} />
-        <Route path="/verify-email" element={<VerifyEmailPage />} />
-        <Route
-          path="/dashboard"
-          element={
-            <ProtectedRoute>
-              <AppLayout>
-                <DashboardPage />
-              </AppLayout>
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/analytics"
-          element={
-            <ProtectedRoute>
-              <AppLayout>
-                <AnalyticsPage />
-              </AppLayout>
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/history"
-          element={
-            <ProtectedRoute>
-              <AppLayout>
-                <HistoryPage />
-              </AppLayout>
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/groups/:groupId"
-          element={
-            <ProtectedRoute>
-              <AppLayout>
-                <GroupDetailPage />
-              </AppLayout>
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/group/:groupId"
-          element={
-            <ProtectedRoute>
-              <AppLayout>
-                <GroupDetailPage />
-              </AppLayout>
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/groups/:groupId/balances"
-          element={
-            <ProtectedRoute>
-              <AppLayout>
-                <BalancesPage />
-              </AppLayout>
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/group/:groupId/balances"
-          element={
-            <ProtectedRoute>
-              <AppLayout>
-                <BalancesPage />
-              </AppLayout>
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/join/:groupId"
-          element={
-            <ProtectedRoute>
-              <JoinRequestPage />
-            </ProtectedRoute>
-          }
-        />
-        <Route path="*" element={<Navigate to="/dashboard" replace />} />
-      </Routes>
+      <Suspense fallback={<PageFallback />}>
+        <Routes>
+          <Route path="/" element={<Navigate to="/dashboard" replace />} />
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/register" element={<RegisterPage />} />
+          <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+          <Route path="/reset-password" element={<ResetPasswordPage />} />
+          <Route path="/verify-email" element={<VerifyEmailPage />} />
+          <Route
+            path="/dashboard"
+            element={
+              <ProtectedRoute>
+                <AppLayout>
+                  <DashboardPage />
+                </AppLayout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/analytics"
+            element={
+              <ProtectedRoute>
+                <AppLayout>
+                  <AnalyticsPage />
+                </AppLayout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/history"
+            element={
+              <ProtectedRoute>
+                <AppLayout>
+                  <HistoryPage />
+                </AppLayout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/groups/:groupId"
+            element={
+              <ProtectedRoute>
+                <AppLayout>
+                  <GroupDetailPage />
+                </AppLayout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/group/:groupId"
+            element={
+              <ProtectedRoute>
+                <AppLayout>
+                  <GroupDetailPage />
+                </AppLayout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/groups/:groupId/balances"
+            element={
+              <ProtectedRoute>
+                <AppLayout>
+                  <BalancesPage />
+                </AppLayout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/group/:groupId/balances"
+            element={
+              <ProtectedRoute>
+                <AppLayout>
+                  <BalancesPage />
+                </AppLayout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/join/:groupId"
+            element={
+              <ProtectedRoute>
+                <JoinRequestPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route path="*" element={<Navigate to="/dashboard" replace />} />
+        </Routes>
+      </Suspense>
     </NavigationProvider>
   );
 }

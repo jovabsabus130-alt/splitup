@@ -131,30 +131,42 @@ function errorHandler(err, req, res, next) { // eslint-disable-line no-unused-va
     message = 'Authentication token expired. Please login again.';
   }
 
-  // 5. Handle Prisma ORM Known Database Errors
-  else if (err.code && typeof err.code === 'string' && err.code.startsWith('P')) {
-    switch (err.code) {
-      case 'P2002': // Unique constraint violation (e.g. duplicate email or group membership)
-        statusCode = 409;
-        message = 'A resource with this unique attribute already exists.';
-        break;
-      case 'P2025': // Record to update or delete not found
-        statusCode = 404;
-        message = 'The requested database record was not found.';
-        break;
-      case 'P2003': // Foreign key constraint failed
-        statusCode = 400;
-        message = 'Invalid relation reference. Referenced record does not exist.';
-        break;
-      case 'P2014': // Relation violation
-        statusCode = 400;
-        message = 'The requested change would violate data relationship constraints.';
-        break;
-      default:
-        // Generic database errors are masked to prevent SQL / schema harvesting
-        statusCode = 500;
-        message = 'Database operation failed. Internal details masked for security.';
-        break;
+  // 5. Handle Prisma ORM Known Database Errors & Initialization Errors
+  else if (
+    (err.code && typeof err.code === 'string' && err.code.startsWith('P')) ||
+    err.name === 'PrismaClientInitializationError' ||
+    err.name === 'PrismaClientKnownRequestError' ||
+    err.name === 'PrismaClientUnknownRequestError' ||
+    err.name === 'PrismaClientRustPanicError' ||
+    err.name === 'PrismaClientValidationError'
+  ) {
+    if (err.name === 'PrismaClientInitializationError' || err.message?.includes("Can't reach database server")) {
+      statusCode = 503;
+      message = 'Database service is currently unreachable. Please check database configuration or network connectivity.';
+    } else {
+      switch (err.code) {
+        case 'P2002': // Unique constraint violation (e.g. duplicate email or group membership)
+          statusCode = 409;
+          message = 'A resource with this unique attribute already exists.';
+          break;
+        case 'P2025': // Record to update or delete not found
+          statusCode = 404;
+          message = 'The requested database record was not found.';
+          break;
+        case 'P2003': // Foreign key constraint failed
+          statusCode = 400;
+          message = 'Invalid relation reference. Referenced record does not exist.';
+          break;
+        case 'P2014': // Relation violation
+          statusCode = 400;
+          message = 'The requested change would violate data relationship constraints.';
+          break;
+        default:
+          // Generic database errors are masked to prevent SQL / schema harvesting
+          statusCode = 500;
+          message = 'Database operation failed. Internal details masked for security.';
+          break;
+      }
     }
   }
 

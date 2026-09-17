@@ -111,6 +111,12 @@ router.get('/', async (req, res, next) => {
               raisedBy: { select: { id: true, name: true } },
             },
           },
+          editHistory: {
+            orderBy: { createdAt: 'desc' },
+            include: {
+              editedBy: { select: { id: true, name: true, email: true } },
+            },
+          },
         },
       }),
     ]);
@@ -121,18 +127,23 @@ router.get('/', async (req, res, next) => {
 
     const formattedTransactions = expenses.map((exp) => {
       const isUserPayer = exp.paidById === authenticatedUserId;
+      const isDeleted = Boolean(exp.isDeleted);
       const totalAmount = Number(exp.amount);
 
       const userSplit = exp.splits.find((s) => s.userId === authenticatedUserId);
       const userShare = userSplit ? Number(userSplit.share) : 0;
 
-      if (isUserPayer) userTotalPaid += totalAmount;
-      userTotalShare += userShare;
+      // Only active (non-deleted) transactions count towards paid & share totals
+      if (!isDeleted) {
+        if (isUserPayer) userTotalPaid += totalAmount;
+        userTotalShare += userShare;
+      }
 
       // Net impact for authenticated user on this transaction:
+      // If deleted: 0
       // If user paid: gets back (totalAmount - userShare)
       // If user did not pay: owes userShare (-userShare)
-      const userNet = isUserPayer ? totalAmount - userShare : -userShare;
+      const userNet = isDeleted ? 0 : (isUserPayer ? totalAmount - userShare : -userShare);
 
       let userRole = 'none';
       if (isUserPayer && userSplit) userRole = 'both';
@@ -145,6 +156,8 @@ router.get('/', async (req, res, next) => {
         category: exp.category,
         description: exp.description,
         isEdited: exp.isEdited,
+        isDeleted,
+        deletedAt: exp.deletedAt || null,
         date: exp.createdAt,
         createdAt: exp.createdAt,
         group: {
@@ -164,10 +177,12 @@ router.get('/', async (req, res, next) => {
           share: Number(s.share),
           isYou: s.userId === authenticatedUserId,
         })),
-        userShare: Number(userShare.toFixed(2)),
+        userShare: isDeleted ? 0 : Number(userShare.toFixed(2)),
+        originalUserShare: Number(userShare.toFixed(2)),
         userNet: Number(userNet.toFixed(2)),
         userRole,
         concerns: exp.concerns || [],
+        editHistory: exp.editHistory || [],
       };
     });
 

@@ -87,7 +87,7 @@ router.get('/', async (req, res, next) => {
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     const startOfNextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
 
-    // Compute authenticated user's actual expense share for the current calendar month
+    // Compute authenticated user's actual expense share for the current calendar month (excluding deleted transactions)
     const userMonthlySplits = await prisma.expenseSplit.findMany({
       where: {
         userId: req.userId,
@@ -100,18 +100,21 @@ router.get('/', async (req, res, next) => {
       },
       select: {
         share: true,
+        expense: { select: { isDeleted: true } },
       },
     });
 
-    const myMonthlyExpense = userMonthlySplits.reduce((acc, split) => acc + Number(split.share), 0);
+    const myMonthlyExpense = userMonthlySplits
+      .filter((split) => !split.expense?.isDeleted)
+      .reduce((acc, split) => acc + Number(split.share), 0);
 
-    // Fetch recent 5 expenses across all groups the user belongs to
+    // Fetch recent 5 active expenses across all groups the user belongs to
     let recentExpenses = [];
     if (groupIds.length > 0) {
-      recentExpenses = await prisma.expense.findMany({
+      const allRecent = await prisma.expense.findMany({
         where: { groupId: { in: groupIds } },
         orderBy: { createdAt: 'desc' },
-        take: 5,
+        take: 10,
         include: {
           paidBy: { select: { id: true, name: true } },
           group: { select: { id: true, name: true } },
@@ -121,6 +124,7 @@ router.get('/', async (req, res, next) => {
           },
         },
       });
+      recentExpenses = allRecent.filter((exp) => !exp.isDeleted).slice(0, 5);
     }
 
     // Fetch active pending settlements where current user is debtor or creditor

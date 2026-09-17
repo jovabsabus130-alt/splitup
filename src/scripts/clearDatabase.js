@@ -1,52 +1,53 @@
-require('dotenv').config();
 const prisma = require('../lib/prisma');
+const { connectMongo } = require('../lib/mongo');
+const RawExpenseLog = require('../models/RawExpenseLog');
 
 async function clearDatabase() {
   console.log('Starting full database wipe...');
+
+  // 1. Truncate PostgreSQL tables
   try {
-    const deletedConcerns = await prisma.transactionConcern.deleteMany({});
-    console.log(`Deleted ${deletedConcerns.count} TransactionConcerns`);
-
-    const deletedEdits = await prisma.expenseEditHistory.deleteMany({});
-    console.log(`Deleted ${deletedEdits.count} ExpenseEditHistories`);
-
-    const deletedSplits = await prisma.expenseSplit.deleteMany({});
-    console.log(`Deleted ${deletedSplits.count} ExpenseSplits`);
-
-    const deletedExpenses = await prisma.expense.deleteMany({});
-    console.log(`Deleted ${deletedExpenses.count} Expenses`);
-
-    const deletedShopping = await prisma.shoppingItem.deleteMany({});
-    console.log(`Deleted ${deletedShopping.count} ShoppingItems`);
-
-    const deletedSettlements = await prisma.settlement.deleteMany({});
-    console.log(`Deleted ${deletedSettlements.count} Settlements`);
-
-    const deletedNotifications = await prisma.notification.deleteMany({});
-    console.log(`Deleted ${deletedNotifications.count} Notifications`);
-
-    const deletedJoinRequests = await prisma.joinRequest.deleteMany({});
-    console.log(`Deleted ${deletedJoinRequests.count} JoinRequests`);
-
-    const deletedMemberships = await prisma.groupMember.deleteMany({});
-    console.log(`Deleted ${deletedMemberships.count} GroupMembers`);
-
-    const deletedGroups = await prisma.group.deleteMany({});
-    console.log(`Deleted ${deletedGroups.count} Groups`);
-
-    const deletedOtps = await prisma.otpCode.deleteMany({});
-    console.log(`Deleted ${deletedOtps.count} OtpCodes`);
-
-    const deletedUsers = await prisma.user.deleteMany({});
-    console.log(`Deleted ${deletedUsers.count} Users`);
-
-    console.log('✅ All data in the database has been successfully deleted.');
-  } catch (error) {
-    console.error('Error while wiping database:', error);
-    process.exit(1);
-  } finally {
-    await prisma.$disconnect();
+    await prisma.$executeRawUnsafe(`
+      TRUNCATE TABLE 
+        "ExpenseEditHistory",
+        "TransactionConcern",
+        "ExpenseSplit",
+        "Expense",
+        "Settlement",
+        "Notification",
+        "ShoppingItem",
+        "JoinRequest",
+        "GroupMember",
+        "OtpCode",
+        "Group",
+        "User"
+      CASCADE;
+    `);
+    console.log('✔ Successfully cleared all PostgreSQL tables (Users, Groups, Expenses, Splits, Settlements, Notifications, etc.)');
+  } catch (err) {
+    console.error('Error clearing PostgreSQL:', err.message);
   }
+
+  // 2. Clear MongoDB collections if configured
+  try {
+    await connectMongo();
+    if (RawExpenseLog.deleteMany) {
+      const res = await RawExpenseLog.deleteMany({});
+      console.log(`✔ Cleared MongoDB RawExpenseLog documents (deleted: ${res.deletedCount || 0})`);
+    }
+  } catch (mongoErr) {
+    console.log('ℹ MongoDB not connected or already empty:', mongoErr.message);
+  }
+
+  console.log('✨ All database data has been completely erased.');
 }
 
-clearDatabase();
+clearDatabase()
+  .catch((e) => {
+    console.error('Failed to wipe database:', e);
+    process.exit(1);
+  })
+  .finally(async () => {
+    await prisma.$disconnect();
+    process.exit(0);
+  });

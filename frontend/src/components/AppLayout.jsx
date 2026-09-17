@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useNavigation } from '../lib/NavigationContext';
 import api from '../lib/api';
-import AIFloatingButton from './AIFloatingButton';
 import AppSidebar from './AppSidebar';
 import MobileBottomNav from './MobileBottomNav';
 import NotificationsModal from './NotificationsModal';
@@ -124,8 +123,6 @@ export default function AppLayout({ children }) {
         onOpenAddFlow={handleOpenAddFlow}
       />
 
-      {/* ── Globally Floating AI Assistant Button ────────────────────────── */}
-      <AIFloatingButton />
 
       {/* ── Single Unified Notifications Modal Instance ──────────────────── */}
       <NotificationsModal

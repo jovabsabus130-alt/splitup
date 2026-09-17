@@ -77,6 +77,8 @@ model Expense {
   category    String
   description String?
   isEdited    Boolean              @default(false)
+  isDeleted   Boolean              @default(false)
+  deletedAt   DateTime?
   createdAt   DateTime             @default(now())
   updatedAt   DateTime             @default(now()) @updatedAt
   editHistory ExpenseEditHistory[]

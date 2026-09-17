@@ -57,6 +57,9 @@ async function getGroupBalances(groupId) {
   }
 
   for (const expense of expenses) {
+    // Ignore deleted transactions in active balance calculations
+    if (expense.isDeleted) continue;
+
     const expenseAmount = Number(expense.amount.toString());
 
     if (!balances.has(expense.paidById)) {
