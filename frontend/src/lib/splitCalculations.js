@@ -78,9 +78,10 @@ export function calculateWeightedSplits({
 
   const remainderCents = totalCents - allocatedCents;
 
-  // Assign remainder cents to the payer if included & has weight > 0, otherwise first included member with weight > 0
+  // Assign remainder cents (less than 1 rupee fraction/cents) to the payer if included, otherwise first included member
   const absorbsMember = includedMembers.find((m) => m.id === payerId && (Number(weights[m.id]) || 0) > 0)
-    || includedMembers.find((m) => (Number(weights[m.id]) || 0) > 0);
+    || includedMembers.find((m) => (Number(weights[m.id]) || 0) > 0)
+    || includedMembers[0];
 
   if (absorbsMember && centsMap[absorbsMember.id] !== undefined) {
     centsMap[absorbsMember.id] += remainderCents;
@@ -93,6 +94,28 @@ export function calculateWeightedSplits({
   }
 
   return result;
+}
+
+/**
+ * Auto-adjust percentage shares so leftover difference (e.g. 0.01% or 0.1%) is absorbed into the payer's share
+ */
+export function autoAdjustPercentages({ members, excludedMembers = {}, percentages = {}, payerId }) {
+  const included = members.filter((m) => !excludedMembers[m.id]);
+  if (included.length === 0) return percentages;
+
+  const sum = included.reduce((s, m) => s + (parseFloat(percentages[m.id]) || 0), 0);
+  const diff = Number((100 - sum).toFixed(2));
+  if (diff === 0) return percentages;
+
+  const targetMember = included.find((m) => m.id === payerId) || included[0];
+  if (!targetMember) return percentages;
+
+  const currentVal = parseFloat(percentages[targetMember.id]) || 0;
+  const nextVal = Math.max(0, Number((currentVal + diff).toFixed(2)));
+  return {
+    ...percentages,
+    [targetMember.id]: String(nextVal),
+  };
 }
 
 /**
@@ -214,7 +237,8 @@ export function validateSplitMode({
     }, 0);
 
     const diff = Number((sumPercent - 100).toFixed(2));
-    if (Math.abs(diff) > 0.05) {
+    // Allow up to 1% leftover or precision delta; weighted calculator allocates remainder to payer
+    if (Math.abs(diff) > 1.0) {
       return {
         isValid: false,
         message: `Percentages must total 100% (currently ${sumPercent.toFixed(1)}%)`,
@@ -228,7 +252,7 @@ export function validateSplitMode({
       return sum + parseFraction(fractions[m.id]);
     }, 0);
 
-    if (Math.abs(sumFraction - 1.0) > 0.005) {
+    if (Math.abs(sumFraction - 1.0) > 0.05) {
       return {
         isValid: false,
         message: `Fractions must represent a complete split summing to 1 (currently ${sumFraction.toFixed(2)})`,
@@ -268,13 +292,13 @@ export function validateSplitMode({
     }
   }
 
-  // Final check: sum of calculated shares must equal totalAmountNum
+  // Final check: sum of calculated shares must equal totalAmountNum (within 1 rupee absorption tolerance)
   const totalShares = includedMembers.reduce((sum, m) => {
     return sum + (Number(calculatedShares[m.id]) || 0);
   }, 0);
 
   const diffShares = Number((totalAmountNum - totalShares).toFixed(2));
-  if (Math.abs(diffShares) > 0.01) {
+  if (Math.abs(diffShares) > 1.00) {
     return {
       isValid: false,
       message: `Calculated splits (₹${totalShares.toFixed(2)}) must sum to total amount (₹${totalAmountNum.toFixed(2)})`,

@@ -6,6 +6,7 @@ import LogExpenseFABModal from '../components/LogExpenseFABModal';
 import ShareModal from '../components/ShareModal';
 import ShoppingListSection from '../components/ShoppingListSection';
 import TransactionConcernModal from '../components/TransactionConcernModal';
+import TransactionDetailModal from '../components/TransactionDetailModal';
 import api from '../lib/api';
 
 export default function GroupDetailPage() {
@@ -28,6 +29,7 @@ export default function GroupDetailPage() {
   const [leavingGroup, setLeavingGroup] = useState(false);
 
   // Modals for Transactions
+  const [detailExpense, setDetailExpense] = useState(null);
   const [editingExpense, setEditingExpense] = useState(null);
   const [historyExpense, setHistoryExpense] = useState(null);
   const [concernExpense, setConcernExpense] = useState(null);
@@ -270,13 +272,13 @@ export default function GroupDetailPage() {
           }}
         >
           {/* Left: Your balance */}
-          <div style={{ flex: 1, minWidth: '140px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-            <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-secondary)' }}>
+          <div style={{ flex: 1, minWidth: '120px', display: 'flex', flexDirection: 'column', gap: '3px' }}>
+            <span style={{ fontSize: '12.5px', fontWeight: 600, color: 'var(--text-secondary)' }}>
               Your balance:
             </span>
             <span
               style={{
-                fontSize: '32px',
+                fontSize: '20px',
                 fontWeight: 800,
                 letterSpacing: '-0.02em',
                 fontFamily: 'var(--font-sans)',
@@ -288,16 +290,16 @@ export default function GroupDetailPage() {
           </div>
 
           {/* Vertical Divider */}
-          <div style={{ width: '1px', height: '50px', background: 'var(--border-subtle)' }} />
+          <div style={{ width: '1px', height: '40px', background: 'var(--border-subtle)' }} />
 
           {/* Right: Net Spent */}
-          <div style={{ flex: 1, minWidth: '140px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-            <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-secondary)' }}>
+          <div style={{ flex: 1, minWidth: '120px', display: 'flex', flexDirection: 'column', gap: '3px' }}>
+            <span style={{ fontSize: '12.5px', fontWeight: 600, color: 'var(--text-secondary)' }}>
               Net Spent:
             </span>
             <span
               style={{
-                fontSize: '32px',
+                fontSize: '20px',
                 fontWeight: 800,
                 letterSpacing: '-0.02em',
                 fontFamily: 'var(--font-sans)',
@@ -393,10 +395,30 @@ export default function GroupDetailPage() {
                       : '';
 
                     return (
-                      <tr key={expense.id} style={isDeleted ? { opacity: 0.65, backgroundColor: 'var(--bg-subtle)' } : {}}>
+                      <tr
+                        key={expense.id}
+                        onClick={() => setDetailExpense(expense)}
+                        style={{
+                          cursor: 'pointer',
+                          ...(isDeleted ? { opacity: 0.65, backgroundColor: 'var(--bg-subtle)' } : {}),
+                        }}
+                        title="Click to view full transaction details"
+                      >
                         <td>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
-                            <strong style={{ color: isDeleted ? 'var(--text-muted)' : 'var(--text-primary)', textDecoration: isDeleted ? 'line-through' : 'none' }}>
+                            <strong
+                              style={{
+                                color: isDeleted ? 'var(--text-muted)' : 'var(--text-primary)',
+                                textDecoration: isDeleted ? 'line-through' : 'none',
+                                maxWidth: '180px',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap',
+                                display: 'inline-block',
+                                verticalAlign: 'middle',
+                              }}
+                              title={expense.description || expense.category}
+                            >
                               {expense.description || expense.category}
                             </strong>
                             {isDeleted && (
@@ -412,7 +434,10 @@ export default function GroupDetailPage() {
                                   cursor: 'pointer',
                                   fontWeight: 700,
                                 }}
-                                onClick={() => setHistoryExpense(expense)}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setHistoryExpense(expense);
+                                }}
                                 title="Click to view deletion audit history"
                               >
                                 Deleted 🗑️
@@ -430,7 +455,10 @@ export default function GroupDetailPage() {
                                   borderColor: 'var(--warning-border)',
                                   cursor: 'pointer',
                                 }}
-                                onClick={() => setHistoryExpense(expense)}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setHistoryExpense(expense);
+                                }}
                                 title="Click to view edit history"
                               >
                                 Edited 📝
@@ -448,7 +476,10 @@ export default function GroupDetailPage() {
                                   borderColor: hasPendingConcern ? 'var(--warning-border)' : 'var(--success-border)',
                                   cursor: 'pointer',
                                 }}
-                                onClick={() => setConcernExpense(expense)}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setConcernExpense(expense);
+                                }}
                                 title="Click to view transaction concerns & flags"
                               >
                                 🚩 {hasPendingConcern ? `${expense.concerns.filter((c) => c.status === 'pending').length} Flagged` : 'Resolved'}
@@ -494,7 +525,10 @@ export default function GroupDetailPage() {
                                 type="button"
                                 className="btn-ghost"
                                 style={{ height: '26px', fontSize: '11.5px', padding: '0 8px', color: 'var(--danger-text)', background: 'var(--danger-bg)' }}
-                                onClick={() => setHistoryExpense(expense)}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setHistoryExpense(expense);
+                                }}
                               >
                                 📜 Audit
                               </button>
@@ -505,7 +539,10 @@ export default function GroupDetailPage() {
                                     type="button"
                                     className="btn-secondary"
                                     style={{ height: '26px', fontSize: '11.5px', padding: '0 8px' }}
-                                    onClick={() => setEditingExpense(expense)}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setEditingExpense(expense);
+                                    }}
                                   >
                                     Edit
                                   </button>
@@ -515,7 +552,10 @@ export default function GroupDetailPage() {
                                     type="button"
                                     className="btn-ghost"
                                     style={{ height: '26px', fontSize: '11.5px', padding: '0 8px', background: 'var(--bg-subtle)' }}
-                                    onClick={() => setHistoryExpense(expense)}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setHistoryExpense(expense);
+                                    }}
                                   >
                                     📜 History
                                   </button>
@@ -527,7 +567,10 @@ export default function GroupDetailPage() {
                                     type="button"
                                     className="btn-danger"
                                     style={{ height: '26px', fontSize: '11.5px', padding: '0 8px' }}
-                                    onClick={() => setDeletingExpense(expense)}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setDeletingExpense(expense);
+                                    }}
                                     title="Delete accidental duplicate"
                                   >
                                     Delete
@@ -540,7 +583,10 @@ export default function GroupDetailPage() {
                                     type="button"
                                     className="btn-ghost"
                                     style={{ height: '26px', fontSize: '11.5px', padding: '0 6px', color: 'var(--text-muted)' }}
-                                    onClick={() => setConcernExpense(expense)}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setConcernExpense(expense);
+                                    }}
                                     title="Flag concern or discrepancy"
                                   >
                                     🚩
@@ -580,6 +626,21 @@ export default function GroupDetailPage() {
         members={members}
         onExpenseAdded={loadGroupData}
       />
+
+      {/* ── Transaction Detail Modal ── */}
+      {detailExpense && (
+        <TransactionDetailModal
+          expense={detailExpense}
+          group={group}
+          members={members}
+          currentUserId={currentUserId}
+          onClose={() => setDetailExpense(null)}
+          onEdit={(exp) => setEditingExpense(exp)}
+          onFlag={(exp) => setConcernExpense(exp)}
+          onDelete={(exp) => setDeletingExpense(exp)}
+          onHistory={(exp) => setHistoryExpense(exp)}
+        />
+      )}
 
       {/* ── Edit Expense Modal ── */}
       {editingExpense && (

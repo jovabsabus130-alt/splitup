@@ -182,19 +182,21 @@ export default function NotificationsModal({ isOpen, onClose, onActionTaken }) {
           gap: '12px',
           padding: '10px 14px',
           borderRadius: 'var(--radius-md)',
-          background: notificationPermission === 'granted' ? 'rgba(16, 185, 129, 0.08)' : 'rgba(99, 102, 241, 0.08)',
-          border: `1px solid ${notificationPermission === 'granted' ? 'rgba(16, 185, 129, 0.25)' : 'rgba(99, 102, 241, 0.25)'}`,
+          background: notificationPermission === 'granted' ? 'rgba(16, 185, 129, 0.08)' : notificationPermission === 'denied' ? 'rgba(239, 68, 68, 0.08)' : 'rgba(99, 102, 241, 0.08)',
+          border: `1px solid ${notificationPermission === 'granted' ? 'rgba(16, 185, 129, 0.25)' : notificationPermission === 'denied' ? 'rgba(239, 68, 68, 0.25)' : 'rgba(99, 102, 241, 0.25)'}`,
           marginTop: 'var(--space-1)',
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span style={{ fontSize: '16px' }}>{notificationPermission === 'granted' ? '🔔' : '🔕'}</span>
+            <span style={{ fontSize: '16px' }}>{notificationPermission === 'granted' ? '🔔' : notificationPermission === 'denied' ? '⚠️' : '🔕'}</span>
             <div style={{ display: 'flex', flexDirection: 'column' }}>
               <span style={{ fontSize: '12.5px', fontWeight: 700, color: 'var(--text-primary)' }}>
-                {notificationPermission === 'granted' ? 'Device Notification Bar Active' : 'Notification Bar Alerts'}
+                {notificationPermission === 'granted' ? 'Device Notification Bar Active' : notificationPermission === 'denied' ? 'Notifications Blocked in Browser' : 'Notification Bar Alerts'}
               </span>
               <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
                 {notificationPermission === 'granted'
                   ? 'Receive alerts even when SplitUp is in the background'
+                  : notificationPermission === 'denied'
+                  ? 'Click the site info/lock icon 🔒 next to the URL to allow notifications'
                   : 'Get alerts in device notification bar when tab is closed'}
               </span>
             </div>
@@ -207,7 +209,7 @@ export default function NotificationsModal({ isOpen, onClose, onActionTaken }) {
                 style={{ fontSize: '12px', padding: '4px 10px', minHeight: '30px' }}
                 onClick={requestPermission}
               >
-                Turn On
+                {notificationPermission === 'denied' ? 'Help / Allow' : 'Turn On'}
               </button>
             ) : (
               <button

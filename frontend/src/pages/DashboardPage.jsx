@@ -6,7 +6,7 @@ import api from '../lib/api';
 
 export default function DashboardPage() {
   const navigate = useNavigate();
-  const { openNotifications, unreadNotifications, refreshNotifications } = useNavigation();
+  const { openNotifications, unreadNotifications, refreshNotifications, notificationPermission, requestPermission } = useNavigation();
   const [summary, setSummary] = useState(null);
   const [groups, setGroups] = useState([]);
   const [shoppingItems, setShoppingItems] = useState([]);
@@ -16,7 +16,12 @@ export default function DashboardPage() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showFABLogModal, setShowFABLogModal] = useState(false);
   const [newGroupName, setNewGroupName] = useState('');
-  const [creating, setCreating] = useState(false);
+  const [hideNotifBanner, setHideNotifBanner] = useState(() => localStorage.getItem('splitup_hide_notif_banner') === 'true');
+
+  function dismissNotifBanner() {
+    setHideNotifBanner(true);
+    localStorage.setItem('splitup_hide_notif_banner', 'true');
+  }
 
   async function loadDashboardData() {
     try {
@@ -118,29 +123,80 @@ export default function DashboardPage() {
       {error ? <div className="error-text">{error}</div> : null}
       {message ? <div className="success-text">{message}</div> : null}
 
+      {/* ── Notification Bar Permission Banner ── */}
+      {!hideNotifBanner && notificationPermission !== 'granted' && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '12px',
+            padding: '10px 14px',
+            borderRadius: 'var(--radius-md)',
+            background: notificationPermission === 'denied' ? 'rgba(239, 68, 68, 0.08)' : 'linear-gradient(135deg, rgba(99, 102, 241, 0.08) 0%, rgba(168, 85, 247, 0.08) 100%)',
+            border: `1px solid ${notificationPermission === 'denied' ? 'rgba(239, 68, 68, 0.25)' : 'rgba(99, 102, 241, 0.25)'}`,
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
+            <span style={{ fontSize: '18px', flexShrink: 0 }}>{notificationPermission === 'denied' ? '⚠️' : '🔔'}</span>
+            <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+              <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)' }}>
+                {notificationPermission === 'denied' ? 'Notifications Blocked by Browser' : 'Enable Notification Bar Alerts'}
+              </span>
+              <span style={{ fontSize: '11.5px', color: 'var(--text-secondary)' }}>
+                {notificationPermission === 'denied'
+                  ? 'Click the lock/settings icon (🔒) in your browser address bar and set Notifications to Allow.'
+                  : 'Get instant alerts in your device notification bar for expenses and invitations.'}
+              </span>
+            </div>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+            {notificationPermission !== 'denied' && (
+              <button
+                type="button"
+                className="btn-primary"
+                style={{ fontSize: '12px', padding: '4px 10px', minHeight: '32px' }}
+                onClick={requestPermission}
+              >
+                Turn On
+              </button>
+            )}
+            <button
+              type="button"
+              className="btn-ghost"
+              style={{ fontSize: '14px', padding: '4px 6px', minHeight: '32px' }}
+              onClick={dismissNotifBanner}
+              title="Dismiss banner"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* ── Top Summary Cards (Matching Wireframe Image 1) ── */}
       {loading ? (
         <div className="dashboard-summary-grid">
-          <div className="card" style={{ minHeight: '140px', justifyContent: 'center', alignItems: 'center' }}>
+          <div className="card" style={{ minHeight: '110px', justifyContent: 'center', alignItems: 'center' }}>
             <div style={{ color: 'var(--text-secondary)' }}>Loading expenses…</div>
           </div>
-          <div className="card" style={{ minHeight: '140px', justifyContent: 'center', alignItems: 'center' }}>
+          <div className="card" style={{ minHeight: '110px', justifyContent: 'center', alignItems: 'center' }}>
             <div style={{ color: 'var(--text-secondary)' }}>Loading net balance…</div>
           </div>
         </div>
       ) : (
         <div className="dashboard-summary-grid">
           {/* ── Card 1: My monthly expense ── */}
-          <div className="card dashboard-hero-card" style={{ gap: 'var(--space-3)' }}>
+          <div className="card dashboard-hero-card" style={{ gap: 'var(--space-2)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)' }}>
+              <span style={{ fontSize: '13.5px', fontWeight: 600, color: 'var(--text-primary)' }}>
                 My monthly expense
               </span>
               <span
                 style={{
-                  fontSize: '12px',
+                  fontSize: '11.5px',
                   fontWeight: 700,
-                  padding: '3px 10px',
+                  padding: '2px 8px',
                   borderRadius: 'var(--radius-full)',
                   backgroundColor: 'var(--bg-subtle)',
                   color: 'var(--text-secondary)',
@@ -154,31 +210,31 @@ export default function DashboardPage() {
             <div style={{ margin: 'var(--space-1) 0' }}>
               <span
                 style={{
-                  fontSize: '32px',
+                  fontSize: '20px',
                   fontWeight: 800,
-                  letterSpacing: '-0.03em',
+                  letterSpacing: '-0.02em',
                   color: 'var(--text-primary)',
                   fontFamily: 'var(--font-sans)',
-                  lineHeight: 1.1,
+                  lineHeight: 1.2,
                 }}
               >
                 ₹{Number(summary?.myMonthlyExpense || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </span>
             </div>
 
-            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 'auto', paddingTop: 'var(--space-2)' }}>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 'auto', paddingTop: 'var(--space-1)' }}>
               <button
                 type="button"
                 className="btn-ghost"
                 id="view-analytics-btn"
                 onClick={() => navigate('/analytics')}
                 style={{
-                  fontSize: '12.5px',
+                  fontSize: '12px',
                   fontWeight: 600,
-                  padding: '4px 10px',
+                  padding: '3px 8px',
                   display: 'inline-flex',
                   alignItems: 'center',
-                  gap: '6px',
+                  gap: '4px',
                   color: 'var(--text-primary)',
                 }}
               >
@@ -189,9 +245,9 @@ export default function DashboardPage() {
           </div>
 
           {/* ── Card 2: Net Balance ── */}
-          <div className="card dashboard-hero-card" style={{ gap: 'var(--space-3)' }}>
+          <div className="card dashboard-hero-card" style={{ gap: 'var(--space-2)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)' }}>
+              <span style={{ fontSize: '13.5px', fontWeight: 600, color: 'var(--text-primary)' }}>
                 Net Balance
               </span>
               <span
@@ -212,19 +268,19 @@ export default function DashboardPage() {
             <div style={{ margin: 'var(--space-1) 0' }}>
               <span
                 style={{
-                  fontSize: '32px',
+                  fontSize: '20px',
                   fontWeight: 800,
-                  letterSpacing: '-0.03em',
+                  letterSpacing: '-0.02em',
                   color: netBalance > 0 ? 'var(--success)' : netBalance < 0 ? 'var(--danger)' : 'var(--text-primary)',
                   fontFamily: 'var(--font-sans)',
-                  lineHeight: 1.1,
+                  lineHeight: 1.2,
                 }}
               >
                 {netBalance > 0 ? '+ ' : netBalance < 0 ? '- ' : ''}₹{Math.abs(netBalance).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </span>
             </div>
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', marginTop: 'auto', paddingTop: 'var(--space-2)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', marginTop: 'auto', paddingTop: 'var(--space-1)' }}>
               <span style={{ color: 'var(--success)', fontWeight: 700 }}>
                 + ₹{totalOwedToYou.toLocaleString('en-IN', { minimumFractionDigits: 0 })}
               </span>

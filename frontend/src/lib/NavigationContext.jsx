@@ -32,10 +32,21 @@ export function NavigationProvider({ children }) {
   const hasInitializedKnown = useRef(false);
   const location = useLocation();
 
-  // 1. Register Service Worker on startup
+  // 1. Register Service Worker on startup and listen to live permission changes
   useEffect(() => {
     registerServiceWorker();
     setNotificationPermission(getNotificationPermission());
+
+    if (typeof navigator !== 'undefined' && 'permissions' in navigator && navigator.permissions.query) {
+      navigator.permissions.query({ name: 'notifications' })
+        .then((permissionStatus) => {
+          setNotificationPermission(permissionStatus.state);
+          permissionStatus.onchange = () => {
+            setNotificationPermission(permissionStatus.state);
+          };
+        })
+        .catch(() => {});
+    }
   }, []);
 
   // 2. Fetch and check for new notifications to push to system notification bar
@@ -55,23 +66,20 @@ export function NavigationProvider({ children }) {
         return;
       }
 
-      // Detect new unread notifications that arrived while in background or inactive
+      // Detect new unread notifications that arrived
       const newUnread = list.filter((n) => !n.isRead && !knownNotificationIds.current.has(n.id));
       if (newUnread.length > 0) {
         newUnread.forEach((n) => {
           knownNotificationIds.current.add(n.id);
 
-          // Dispatch to system notification bar if window is inactive or in background
-          const isInactive = document.hidden || document.visibilityState === 'hidden' || !document.hasFocus();
-          if (isInactive) {
-            const targetUrl = n.groupId ? `/groups/${n.groupId}` : '/dashboard';
-            sendSystemNotification({
-              title: n.title || 'SplitUp Update 🔔',
-              body: n.message || 'You have a new activity in SplitUp',
-              data: { url: targetUrl },
-              tag: `splitup-notif-${n.id}`,
-            });
-          }
+          // Dispatch to system notification bar
+          const targetUrl = n.groupId ? `/groups/${n.groupId}` : '/dashboard';
+          sendSystemNotification({
+            title: n.title || 'SplitUp Update 🔔',
+            body: n.message || 'You have a new activity in SplitUp',
+            data: { url: targetUrl },
+            tag: `splitup-notif-${n.id}`,
+          });
         });
       }
     } catch {
@@ -94,6 +102,11 @@ export function NavigationProvider({ children }) {
 
   // 4. Request system notification permission
   async function handleRequestPermission() {
+    if (getNotificationPermission() === 'denied') {
+      window.alert('Notification permissions are currently blocked in your browser.\n\nTo enable alerts:\n1. Click the site settings icon (🔒 or ⚙️) next to the URL in your browser address bar.\n2. Change "Notifications" to "Allow".\n3. Return here to receive alerts!');
+      setNotificationPermission('denied');
+      return 'denied';
+    }
     const perm = await requestNotificationPermission();
     setNotificationPermission(perm);
     if (perm === 'granted') {

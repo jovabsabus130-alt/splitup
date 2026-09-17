@@ -52,8 +52,9 @@ export default function AnalyticsPage() {
         const { data } = await api.get('/api/groups');
         const userGroups = data.groups || [];
         setGroups(userGroups);
-        if (!selectedGroupId && userGroups.length > 0 && initialScope === 'group') {
-          setSelectedGroupId(userGroups[0].id);
+        if (userGroups.length > 0) {
+          const match = userGroups.find((g) => g.id === initialGroupId);
+          setSelectedGroupId(match ? match.id : userGroups[0].id);
         }
       } catch {
         setGroups([]);
@@ -61,6 +62,15 @@ export default function AnalyticsPage() {
     }
     loadGroups();
   }, []);
+
+  // Ensure active selectedGroupId when switching to group mode
+  useEffect(() => {
+    if (scope === 'group' && groups.length > 0) {
+      if (!selectedGroupId || !groups.some((g) => g.id === selectedGroupId)) {
+        setSelectedGroupId(groups[0].id);
+      }
+    }
+  }, [scope, groups, selectedGroupId]);
 
   // Synchronize URL search params
   useEffect(() => {
@@ -95,6 +105,12 @@ export default function AnalyticsPage() {
       const { data } = await api.get(`/api/analytics?${queryParams.toString()}`);
       setAnalytics(data.analytics);
     } catch (err) {
+      const status = err.response?.status;
+      // If group is forbidden or not found, fallback to first valid group if available
+      if (scope === 'group' && (status === 403 || status === 404) && groups.length > 0 && selectedGroupId !== groups[0].id) {
+        setSelectedGroupId(groups[0].id);
+        return;
+      }
       setError(err.response?.data?.message || 'Failed to load analytics data.');
       setAnalytics(null);
     } finally {
@@ -123,13 +139,13 @@ export default function AnalyticsPage() {
         tips.push({
           icon: '⚠️',
           title: `Heavy ${topCat.category} Outlay`,
-          desc: `${topCat.category} accounts for ${topCat.percentage}% (₹${topCat.amount.toFixed(2)}) of your total spending. Consider tracking recurring expenses in this area.`,
+          desc: `${topCat.category} accounts for ${topCat.percentage}% (₹${Number(topCat.amount || 0).toFixed(2)}) of your total spending. Consider tracking recurring expenses in this area.`,
         });
       } else {
         tips.push({
           icon: '🏷️',
           title: `Top Spending Category: ${topCat.category}`,
-          desc: `You spent ₹${topCat.amount.toFixed(2)} (${topCat.percentage}%) across ${topCat.count} transactions in ${topCat.category}.`,
+          desc: `You spent ₹${Number(topCat.amount || 0).toFixed(2)} (${topCat.percentage}%) across ${topCat.count || 0} transactions in ${topCat.category}.`,
         });
       }
     }
@@ -139,14 +155,14 @@ export default function AnalyticsPage() {
         tips.push({
           icon: '💰',
           title: 'Pending Receivables',
-          desc: `You are owed ₹${analytics.amountReceivable.toFixed(2)} across groups. Initiating settlements can help recover funds faster.`,
+          desc: `You are owed ₹${Number(analytics.amountReceivable || 0).toFixed(2)} across groups. Initiating settlements can help recover funds faster.`,
         });
       }
       if (analytics.amountOwed > 0) {
         tips.push({
           icon: '⚖️',
           title: 'Outstanding Payables',
-          desc: `You have ₹${analytics.amountOwed.toFixed(2)} in shared dues. Keeping balances clear avoids debt accumulation.`,
+          desc: `You have ₹${Number(analytics.amountOwed || 0).toFixed(2)} in shared dues. Keeping balances clear avoids debt accumulation.`,
         });
       }
     } else {
@@ -154,23 +170,24 @@ export default function AnalyticsPage() {
         tips.push({
           icon: '✨',
           title: 'Favorable Group Net Balance',
-          desc: `The group owes you ₹${analytics.userBalance.userNetBalance.toFixed(2)}. Check the group settlement ledger for detailed payouts.`,
+          desc: `The group owes you ₹${Number(analytics.userBalance.userNetBalance || 0).toFixed(2)}. Check the group settlement ledger for detailed payouts.`,
         });
       } else if (analytics.userBalance?.userNetBalance < 0) {
         tips.push({
           icon: '💳',
           title: 'Group Balance Settlement Needed',
-          desc: `Your current net share in this group is ₹${Math.abs(analytics.userBalance.userNetBalance).toFixed(2)}. Use Settle Up to clear dues.`,
+          desc: `Your current net share in this group is ₹${Number(Math.abs(analytics.userBalance.userNetBalance || 0)).toFixed(2)}. Use Settle Up to clear dues.`,
         });
       }
     }
 
     if (analytics.highestExpenses && analytics.highestExpenses.length > 0) {
       const topExpense = analytics.highestExpenses[0];
+      const cost = Number(scope === 'personal' ? (topExpense.userShare ?? topExpense.amount ?? topExpense.totalAmount ?? 0) : (topExpense.amount ?? topExpense.totalAmount ?? 0));
       tips.push({
         icon: '📊',
-        title: `Single Largest Transaction: ${topExpense.description}`,
-        desc: `Amount: ₹${(scope === 'personal' ? topExpense.userShare : topExpense.amount).toFixed(2)} in ${topExpense.category}.`,
+        title: `Single Largest Transaction: ${topExpense.description || 'Expense'}`,
+        desc: `Amount: ₹${cost.toFixed(2)} in ${topExpense.category || 'General'}.`,
       });
     }
 
@@ -404,19 +421,32 @@ export default function AnalyticsPage() {
           <div className="spinner" style={{ margin: '0 auto var(--space-3) auto' }} />
           <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: '14px' }}>Loading analytics calculations…</p>
         </div>
-      ) : !analytics ? null : (
+      ) : !analytics ? (
+        <div className="card" style={{ textAlign: 'center', padding: 'var(--space-8)' }}>
+          <p style={{ margin: '0 0 var(--space-3) 0', color: 'var(--text-secondary)', fontSize: '14px' }}>
+            {scope === 'group' && groups.length === 0
+              ? 'No groups found. Create or join a group first to track group analytics.'
+              : 'Select a group or time period to display analytics.'}
+          </p>
+          {scope === 'group' && groups.length === 0 && (
+            <Link to="/dashboard" className="btn-primary" style={{ display: 'inline-flex', margin: '0 auto' }}>
+              Go to Dashboard
+            </Link>
+          )}
+        </div>
+      ) : (
         <>
           {/* ── Top Summary Metric Cards ── */}
           <div className="analytics-kpi-grid">
             {/* Total Spending KPI */}
             <div className="card" style={{ margin: 0 }}>
-              <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+              <span style={{ fontSize: '11.5px', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
                 {scope === 'personal' ? 'Your Spending' : 'Total Group Spending'}
               </span>
-              <div style={{ fontSize: '28px', fontWeight: 700, color: 'var(--text-primary)', marginTop: 'var(--space-1)', fontVariantNumeric: 'tabular-nums' }}>
+              <div style={{ fontSize: '20px', fontWeight: 700, color: 'var(--text-primary)', marginTop: 'var(--space-1)', fontVariantNumeric: 'tabular-nums' }}>
                 ₹{Number(analytics.totalSpending || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </div>
-              <span style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px' }}>
+              <span style={{ fontSize: '11.5px', color: 'var(--text-secondary)', marginTop: '2px' }}>
                 Across {analytics.periodLabel}
               </span>
             </div>
@@ -425,38 +455,38 @@ export default function AnalyticsPage() {
             {scope === 'personal' ? (
               <>
                 <div className="card" style={{ margin: 0 }}>
-                  <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                  <span style={{ fontSize: '11.5px', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
                     You Are Owed (Receivable)
                   </span>
-                  <div style={{ fontSize: '28px', fontWeight: 700, color: 'var(--success)', marginTop: 'var(--space-1)', fontVariantNumeric: 'tabular-nums' }}>
+                  <div style={{ fontSize: '20px', fontWeight: 700, color: 'var(--success)', marginTop: 'var(--space-1)', fontVariantNumeric: 'tabular-nums' }}>
                     +₹{Number(analytics.amountReceivable || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </div>
-                  <span style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                  <span style={{ fontSize: '11.5px', color: 'var(--text-secondary)', marginTop: '2px' }}>
                     Across all your active groups
                   </span>
                 </div>
 
                 <div className="card" style={{ margin: 0 }}>
-                  <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                  <span style={{ fontSize: '11.5px', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
                     You Owe (Payable)
                   </span>
-                  <div style={{ fontSize: '28px', fontWeight: 700, color: analytics.amountOwed > 0 ? 'var(--danger)' : 'var(--text-primary)', marginTop: 'var(--space-1)', fontVariantNumeric: 'tabular-nums' }}>
-                    {analytics.amountOwed > 0 ? '-' : ''}₹{Number(analytics.amountOwed || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  <div style={{ fontSize: '20px', fontWeight: 700, color: Number(analytics.amountOwed || 0) > 0 ? 'var(--danger)' : 'var(--text-primary)', marginTop: 'var(--space-1)', fontVariantNumeric: 'tabular-nums' }}>
+                    {Number(analytics.amountOwed || 0) > 0 ? '-' : ''}₹{Number(analytics.amountOwed || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </div>
-                  <span style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px' }}>
-                    Net balance: <strong style={{ color: analytics.netBalance >= 0 ? 'var(--success)' : 'var(--danger)' }}>{analytics.netBalance >= 0 ? '+' : ''}₹{analytics.netBalance.toFixed(2)}</strong>
+                  <span style={{ fontSize: '11.5px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                    Net balance: <strong style={{ color: Number(analytics.netBalance || 0) >= 0 ? 'var(--success)' : 'var(--danger)' }}>{Number(analytics.netBalance || 0) >= 0 ? '+' : ''}₹{Number(analytics.netBalance || 0).toFixed(2)}</strong>
                   </span>
                 </div>
               </>
             ) : (
               <>
                 <div className="card" style={{ margin: 0 }}>
-                  <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                  <span style={{ fontSize: '11.5px', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
                     Your Net Position in Group
                   </span>
                   <div
                     style={{
-                      fontSize: '28px',
+                      fontSize: '20px',
                       fontWeight: 700,
                       color: analytics.userBalance?.userNetBalance > 0 ? 'var(--success)' : analytics.userBalance?.userNetBalance < 0 ? 'var(--danger)' : 'var(--text-primary)',
                       marginTop: 'var(--space-1)',
@@ -465,19 +495,19 @@ export default function AnalyticsPage() {
                   >
                     {analytics.userBalance?.userNetBalance > 0 ? '+' : ''}₹{Number(analytics.userBalance?.userNetBalance || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </div>
-                  <span style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                  <span style={{ fontSize: '11.5px', color: 'var(--text-secondary)', marginTop: '2px' }}>
                     {analytics.userBalance?.userNetBalance > 0 ? 'You are owed money' : analytics.userBalance?.userNetBalance < 0 ? 'You need to settle up' : 'All settled up'}
                   </span>
                 </div>
 
                 <div className="card" style={{ margin: 0 }}>
-                  <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                  <span style={{ fontSize: '11.5px', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
                     Active Members Logged
                   </span>
-                  <div style={{ fontSize: '28px', fontWeight: 700, color: 'var(--text-primary)', marginTop: 'var(--space-1)' }}>
+                  <div style={{ fontSize: '20px', fontWeight: 700, color: 'var(--text-primary)', marginTop: 'var(--space-1)' }}>
                     {analytics.memberBreakdown?.length || 0}
                   </div>
-                  <span style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                  <span style={{ fontSize: '11.5px', color: 'var(--text-secondary)', marginTop: '2px' }}>
                     Participants in {analytics.groupName}
                   </span>
                 </div>
@@ -539,7 +569,7 @@ export default function AnalyticsPage() {
               <div style={{ overflowX: 'hidden', padding: '12px 0 6px 0' }}>
                 {/* Responsive SVG Bar Chart */}
                 <div style={{ display: 'flex', alignItems: 'flex-end', gap: period === 'month' ? '2px' : '8px', height: '160px', width: '100%', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '4px' }}>
-                  {analytics.trend.map((point, idx) => {
+                  {(analytics.trend || []).map((point, idx) => {
                     const heightPercent = maxTrendAmount > 0 ? Math.max((point.amount / maxTrendAmount) * 100, point.amount > 0 ? 6 : 0) : 0;
                     return (
                       <div
@@ -553,7 +583,7 @@ export default function AnalyticsPage() {
                           justifyContent: 'flex-end',
                           position: 'relative',
                         }}
-                        title={`${point.label}: ₹${point.amount.toFixed(2)}`}
+                        title={`${point.label}: ₹${Number(point.amount || 0).toFixed(2)}`}
                       >
                         {/* Bar */}
                         <div
@@ -582,13 +612,13 @@ export default function AnalyticsPage() {
                       <span>23:00</span>
                     </>
                   ) : period === 'week' ? (
-                    analytics.trend.map((p, idx) => <span key={idx}>{p.label}</span>)
+                    (analytics.trend || []).map((p, idx) => <span key={idx}>{p.label}</span>)
                   ) : (
                     <>
                       <span>Day 1</span>
                       <span>Day 10</span>
                       <span>Day 20</span>
-                      <span>Day {analytics.trend.length}</span>
+                      <span>Day {analytics.trend?.length || 30}</span>
                     </>
                   )}
                 </div>
@@ -644,10 +674,10 @@ export default function AnalyticsPage() {
               {analytics.categoryBreakdown?.length === 0 ? (
                 <p className="no-requests-text" style={{ margin: 'var(--space-3) 0' }}>No category data available.</p>
               ) : categoryChartType === 'donut' ? (
-                renderDonutChart(analytics.categoryBreakdown, analytics.totalSpending, CHART_COLORS, true)
+                renderDonutChart(analytics.categoryBreakdown || [], analytics.totalSpending || 0, CHART_COLORS, true)
               ) : (
                 <div style={{ display: 'grid', gap: 'var(--space-3)' }}>
-                  {analytics.categoryBreakdown.map((cat, idx) => {
+                  {(analytics.categoryBreakdown || []).map((cat, idx) => {
                     const color = CHART_COLORS[idx % CHART_COLORS.length];
                     return (
                       <div key={cat.category} style={{ display: 'grid', gap: '4px' }}>
@@ -658,7 +688,7 @@ export default function AnalyticsPage() {
                             <span style={{ fontSize: '11.5px', color: 'var(--text-muted)' }}>({cat.count} tx)</span>
                           </span>
                           <strong style={{ fontVariantNumeric: 'tabular-nums' }}>
-                            ₹{cat.amount.toFixed(2)}{' '}
+                            ₹{Number(cat.amount || 0).toFixed(2)}{' '}
                             <span style={{ fontSize: '11.5px', color: 'var(--text-muted)', fontWeight: 400 }}>({cat.percentage}%)</span>
                           </strong>
                         </div>
@@ -727,10 +757,10 @@ export default function AnalyticsPage() {
                 {analytics.groupBreakdown?.length === 0 ? (
                   <p className="no-requests-text" style={{ margin: 'var(--space-3) 0' }}>No group spending recorded.</p>
                 ) : groupChartType === 'donut' ? (
-                  renderDonutChart(analytics.groupBreakdown, analytics.totalSpending, CHART_COLORS, false)
+                  renderDonutChart(analytics.groupBreakdown || [], analytics.totalSpending || 0, CHART_COLORS, false)
                 ) : (
                   <div style={{ display: 'grid', gap: 'var(--space-3)' }}>
-                    {analytics.groupBreakdown.map((grp, idx) => {
+                    {(analytics.groupBreakdown || []).map((grp, idx) => {
                       const color = CHART_COLORS[idx % CHART_COLORS.length];
                       return (
                         <div key={grp.groupId} style={{ display: 'grid', gap: '4px' }}>
@@ -742,7 +772,7 @@ export default function AnalyticsPage() {
                               {grp.groupName}
                             </Link>
                             <strong style={{ fontVariantNumeric: 'tabular-nums' }}>
-                              ₹{grp.amount.toFixed(2)}{' '}
+                              ₹{Number(grp.amount || 0).toFixed(2)}{' '}
                               <span style={{ fontSize: '11.5px', color: 'var(--text-muted)', fontWeight: 400 }}>({grp.percentage}%)</span>
                             </strong>
                           </div>
@@ -805,18 +835,18 @@ export default function AnalyticsPage() {
                   </div>
                 </div>
 
-                {analytics.memberBreakdown?.length === 0 ? (
-                  <p className="no-requests-text" style={{ margin: 'var(--space-3) 0' }}>No member activity recorded.</p>
+                {analytics.memberBreakdown?.length === 0 || analytics.totalSpending === 0 ? (
+                  <p className="no-requests-text" style={{ margin: 'var(--space-3) 0' }}>No member spending recorded in this period.</p>
                 ) : groupChartType === 'donut' ? (
                   renderDonutChart(
-                    analytics.memberBreakdown.map((m) => ({ ...m, amount: m.shareAmount })),
-                    analytics.totalSpending,
+                    (analytics.memberBreakdown || []).map((m) => ({ ...m, amount: m.shareAmount })),
+                    analytics.totalSpending || 0,
                     CHART_COLORS,
                     false
                   )
                 ) : (
                   <div style={{ display: 'grid', gap: 'var(--space-3)' }}>
-                    {analytics.memberBreakdown.map((m, idx) => {
+                    {(analytics.memberBreakdown || []).map((m, idx) => {
                       const color = CHART_COLORS[idx % CHART_COLORS.length];
                       return (
                         <div key={m.userId} style={{ display: 'grid', gap: '4px' }}>
@@ -824,19 +854,19 @@ export default function AnalyticsPage() {
                             <span style={{ fontWeight: 500 }}>
                               {m.name}
                               <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '6px' }}>
-                                Paid: ₹{m.paidAmount.toFixed(2)}
+                                Paid: ₹{Number(m.paidAmount || 0).toFixed(2)}
                               </span>
                             </span>
                             <strong style={{ fontVariantNumeric: 'tabular-nums' }}>
-                              ₹{m.shareAmount.toFixed(2)}{' '}
-                              <span style={{ fontSize: '11.5px', color: 'var(--text-muted)', fontWeight: 400 }}>({m.percentage}%)</span>
+                              ₹{Number(m.shareAmount || 0).toFixed(2)}{' '}
+                              <span style={{ fontSize: '11.5px', color: 'var(--text-muted)', fontWeight: 400 }}>({m.percentage || 0}%)</span>
                             </strong>
                           </div>
                           <div style={{ height: '6px', background: 'var(--bg-subtle)', borderRadius: '3px', overflow: 'hidden' }}>
                             <div
                               style={{
                                 height: '100%',
-                                width: `${m.percentage}%`,
+                                width: `${m.percentage || 0}%`,
                                 background: color,
                                 borderRadius: '3px',
                               }}
@@ -873,18 +903,18 @@ export default function AnalyticsPage() {
                           {exp.description}
                         </div>
                         <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-                          {scope === 'personal' ? `${exp.groupName} • ` : ''}Paid by {exp.paidBy} &bull; {new Date(exp.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                          {scope === 'personal' && exp.groupName ? `${exp.groupName} • ` : ''}Paid by {exp.paidBy || 'Member'}{exp.date ? ` • ${new Date(exp.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : ''}
                         </div>
                       </div>
                     </div>
 
                     <div style={{ textAlign: 'right', flexShrink: 0 }}>
                       <div style={{ fontWeight: 600, fontSize: '14px', color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
-                        ₹{scope === 'personal' ? exp.userShare.toFixed(2) : exp.amount.toFixed(2)}
+                        ₹{scope === 'personal' ? Number(exp.userShare ?? exp.amount ?? exp.totalAmount ?? 0).toFixed(2) : Number(exp.amount ?? exp.totalAmount ?? exp.userShare ?? 0).toFixed(2)}
                       </div>
-                      {scope === 'personal' && exp.totalAmount !== exp.userShare && (
+                      {scope === 'personal' && exp.totalAmount !== undefined && exp.totalAmount !== exp.userShare && (
                         <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-                          Total: ₹{exp.totalAmount.toFixed(2)}
+                          Total: ₹{Number(exp.totalAmount).toFixed(2)}
                         </div>
                       )}
                     </div>

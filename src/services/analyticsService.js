@@ -233,15 +233,16 @@ async function getPersonalAnalytics({ userId, period = 'month', date }) {
 
   // 7. Highest Expenses
   const highestExpenses = splits
+    .filter((s) => !s.expense?.isDeleted)
     .map((s) => ({
       id: s.expense.id,
-      description: s.expense.description || s.expense.category,
-      category: s.expense.category,
-      totalAmount: Number(Number(s.expense.amount).toFixed(2)),
-      userShare: Number(Number(s.share).toFixed(2)),
-      date: s.expense.createdAt.toISOString(),
-      groupId: s.expense.group.id,
-      groupName: s.expense.group.name,
+      description: s.expense.description || s.expense.category || 'Expense',
+      category: s.expense.category || 'General',
+      totalAmount: Number(Number(s.expense.amount?.toString ? s.expense.amount.toString() : s.expense.amount || 0).toFixed(2)),
+      userShare: Number(Number(s.share?.toString ? s.share.toString() : s.share || 0).toFixed(2)),
+      date: s.expense.createdAt ? (s.expense.createdAt.toISOString ? s.expense.createdAt.toISOString() : new Date(s.expense.createdAt).toISOString()) : new Date().toISOString(),
+      groupId: s.expense.group?.id || s.expense.groupId,
+      groupName: s.expense.group?.name || 'Group',
       paidBy: s.expense.paidBy?.name || 'Member',
     }))
     .sort((a, b) => b.userShare - a.userShare)
@@ -351,25 +352,32 @@ async function getGroupAnalytics({ userId, groupId, period = 'month', date }) {
   trendBuckets.forEach((b) => trendMap.set(b.key, 0));
 
   allMembers.forEach((m) => {
-    memberPaidMap.set(m.user.id, 0);
-    memberShareMap.set(m.user.id, 0);
+    const uId = m.user?.id || m.userId;
+    if (uId) {
+      memberPaidMap.set(uId, 0);
+      memberShareMap.set(uId, 0);
+    }
   });
 
   for (const exp of expenses) {
     if (exp.isDeleted) continue;
 
-    const expAmount = Number(exp.amount);
+    const expAmount = Number(exp.amount?.toString ? exp.amount.toString() : exp.amount) || 0;
     totalGroupSpending += expAmount;
 
     // Paid by
     const payerId = exp.paidById;
-    memberPaidMap.set(payerId, (memberPaidMap.get(payerId) || 0) + expAmount);
+    if (payerId) {
+      memberPaidMap.set(payerId, (memberPaidMap.get(payerId) || 0) + expAmount);
+    }
 
     // Splits shares
-    for (const split of exp.splits) {
+    for (const split of exp.splits || []) {
       const uId = split.userId;
-      const sAmt = Number(split.share);
-      memberShareMap.set(uId, (memberShareMap.get(uId) || 0) + sAmt);
+      const sAmt = Number(split.share?.toString ? split.share.toString() : split.share) || 0;
+      if (uId) {
+        memberShareMap.set(uId, (memberShareMap.get(uId) || 0) + sAmt);
+      }
     }
 
     // Category
@@ -408,13 +416,14 @@ async function getGroupAnalytics({ userId, groupId, period = 'month', date }) {
   // 6. Format Member Spending Breakdown
   const memberBreakdown = allMembers
     .map((m) => {
-      const paid = Number((memberPaidMap.get(m.user.id) || 0).toFixed(2));
-      const share = Number((memberShareMap.get(m.user.id) || 0).toFixed(2));
+      const uId = m.user?.id || m.userId;
+      const paid = Number((memberPaidMap.get(uId) || 0).toFixed(2));
+      const share = Number((memberShareMap.get(uId) || 0).toFixed(2));
       const net = Number((paid - share).toFixed(2));
       return {
-        userId: m.user.id,
-        name: m.user.name,
-        email: m.user.email,
+        userId: uId,
+        name: m.user?.name || m.user?.email || 'Member',
+        email: m.user?.email || '',
         paidAmount: paid,
         shareAmount: share,
         netPeriodAmount: net,
@@ -432,26 +441,40 @@ async function getGroupAnalytics({ userId, groupId, period = 'month', date }) {
 
   // 8. Highest Expenses
   const highestExpenses = expenses
-    .map((e) => ({
-      id: e.id,
-      description: e.description || e.category,
-      category: e.category,
-      amount: Number(Number(e.amount).toFixed(2)),
-      date: e.createdAt.toISOString(),
-      paidBy: e.paidBy?.name || 'Member',
-    }))
+    .filter((e) => !e.isDeleted)
+    .map((e) => {
+      const amt = Number(Number(e.amount?.toString ? e.amount.toString() : e.amount || 0).toFixed(2)) || 0;
+      const mySplit = (e.splits || []).find((s) => s.userId === userId);
+      const userShare = mySplit ? Number(Number(mySplit.share?.toString ? mySplit.share.toString() : mySplit.share || 0).toFixed(2)) : amt;
+      return {
+        id: e.id,
+        description: e.description || e.category || 'Expense',
+        category: e.category || 'General',
+        amount: amt,
+        totalAmount: amt,
+        userShare,
+        date: e.createdAt ? (e.createdAt.toISOString ? e.createdAt.toISOString() : new Date(e.createdAt).toISOString()) : new Date().toISOString(),
+        paidBy: e.paidBy?.name || 'Member',
+        groupName: membership.group?.name || 'Group',
+      };
+    })
     .sort((a, b) => b.amount - a.amount)
     .slice(0, 10);
 
   // 9. Balances within the group from balanceService
-  const balances = await getGroupBalances(groupId);
+  let balances = [];
+  try {
+    balances = await getGroupBalances(groupId);
+  } catch {
+    balances = [];
+  }
   const myGroupBal = balances.find((b) => b.userId === userId);
-  const userNetBalance = myGroupBal ? Number(myGroupBal.netBalance.toFixed(2)) : 0;
+  const userNetBalance = myGroupBal ? Number(Number(myGroupBal.netBalance || 0).toFixed(2)) : 0;
 
   return {
     scope: 'group',
     groupId,
-    groupName: membership.group.name,
+    groupName: membership.group?.name || 'Group',
     period,
     periodLabel,
     dateRange: {

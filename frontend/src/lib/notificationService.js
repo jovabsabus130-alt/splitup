@@ -33,28 +33,33 @@ export async function requestNotificationPermission() {
 }
 
 export async function sendSystemNotification({ title, body, icon = '/favicon.svg', data = { url: '/dashboard' }, tag = 'splitup-alert' }) {
-  if (!isNotificationSupported() || Notification.permission !== 'granted') {
-    return false;
-  }
+  if (!isNotificationSupported()) return false;
 
-  // 1. Try to display via active Service Worker (appears in mobile/desktop notification bar even in background)
+  const currentPerm = Notification.permission;
+  if (currentPerm !== 'granted') return false;
+
+  // 1. Try to display via active Service Worker (required on Android Chrome / Mobile)
   if ('serviceWorker' in navigator) {
     try {
-      const registration = await navigator.serviceWorker.ready;
+      const registration = await Promise.race([
+        navigator.serviceWorker.ready,
+        new Promise((_, reject) => setTimeout(() => reject(new Error('SW ready timeout')), 1000)),
+      ]);
+
       if (registration && registration.showNotification) {
         await registration.showNotification(title || 'SplitUp', {
           body: body || 'New activity in SplitUp',
           icon,
           badge: icon,
           vibrate: [200, 100, 200],
-          tag,
+          tag: tag || `splitup-${Date.now()}`,
           renotify: true,
           data,
         });
         return true;
       }
-    } catch (err) {
-      console.warn('Failed to show via ServiceWorker:', err);
+    } catch {
+      // Proceed to fallback
     }
   }
 
@@ -63,7 +68,7 @@ export async function sendSystemNotification({ title, body, icon = '/favicon.svg
     const notif = new Notification(title || 'SplitUp', {
       body: body || 'New activity in SplitUp',
       icon,
-      tag,
+      tag: tag || `splitup-${Date.now()}`,
       data,
     });
     notif.onclick = () => {

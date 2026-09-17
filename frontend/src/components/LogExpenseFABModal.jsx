@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import api from '../lib/api';
 import { PREDEFINED_CATEGORIES } from '../lib/constants';
-import { calculateSharesByMode, parseFraction, validateSplitMode } from '../lib/splitCalculations';
+import CategoryPicker from './CategoryPicker';
+import { autoAdjustPercentages, calculateSharesByMode, parseFraction, validateSplitMode } from '../lib/splitCalculations';
 
 export default function LogExpenseFABModal({
   isOpen,
@@ -12,6 +13,7 @@ export default function LogExpenseFABModal({
   onExpenseAdded,
 }) {
   const [activeTab, setActiveTab] = useState('log'); // 'log' | 'ai'
+  const [isPersonalExpense, setIsPersonalExpense] = useState(false);
   
   // Group state (for dashboard usage when groupId is not fixed)
   const [groups, setGroups] = useState([]);
@@ -45,6 +47,22 @@ export default function LogExpenseFABModal({
     const raw = localStorage.getItem('splitup_user');
     return raw ? JSON.parse(raw) : null;
   }, []);
+
+  async function getOrCreatePersonalGroup() {
+    const existing = groups.find((g) => {
+      const name = (g.name || '').toLowerCase();
+      return name === 'personal' || name === 'personal expenses' || name === 'self' || name === 'my expenses';
+    });
+    if (existing) return existing.id;
+    try {
+      const { data } = await api.post('/api/groups', { name: 'Personal Expenses' });
+      const newGroup = data.group;
+      setGroups((prev) => [newGroup, ...prev]);
+      return newGroup.id;
+    } catch {
+      return groups[0]?.id || '';
+    }
+  }
 
   // Fetch groups if not provided
   useEffect(() => {
@@ -186,23 +204,28 @@ export default function LogExpenseFABModal({
 
     if (splitMode === 'percentage') {
       const sum = included.reduce((s, m) => s + (parseFloat(percentages[m.id]) || 0), 0);
-      const diff = Number((100 - sum).toFixed(1));
+      const diff = Number((100 - sum).toFixed(2));
+      const isClean = Math.abs(diff) <= 0.05;
+      const isAcceptable = Math.abs(diff) <= 1.0;
       return {
-        isBalanced: Math.abs(diff) <= 0.05,
-        text: `Total: ${sum.toFixed(1)}% / 100%`,
-        subText: Math.abs(diff) <= 0.05 ? 'Balanced ✓' : diff > 0 ? `${diff}% remaining` : `${Math.abs(diff)}% over`,
-        isError: Math.abs(diff) > 0.05,
+        isBalanced: isAcceptable,
+        text: `Total: ${sum.toFixed(2)}% / 100%`,
+        subText: isClean ? 'Balanced ✓' : isAcceptable ? `Auto-adjusts ${Math.abs(diff)}% to payer` : diff > 0 ? `${diff}% remaining` : `${Math.abs(diff)}% over`,
+        isError: !isAcceptable,
+        diff,
       };
     }
 
     if (splitMode === 'fraction') {
       const sum = included.reduce((s, m) => s + parseFraction(fractions[m.id]), 0);
       const diff = Number((1 - sum).toFixed(2));
+      const isAcceptable = Math.abs(diff) <= 0.05;
       return {
-        isBalanced: Math.abs(diff) <= 0.005,
+        isBalanced: isAcceptable,
         text: `Total: ${sum.toFixed(2)} / 1.00`,
-        subText: Math.abs(diff) <= 0.005 ? 'Balanced ✓' : diff > 0 ? `${diff} remaining` : `${Math.abs(diff)} over`,
-        isError: Math.abs(diff) > 0.005,
+        subText: isAcceptable ? 'Balanced ✓' : diff > 0 ? `${diff} remaining` : `${Math.abs(diff)} over`,
+        isError: !isAcceptable,
+        diff,
       };
     }
 
@@ -237,6 +260,16 @@ export default function LogExpenseFABModal({
     };
   }, [splitMode, amount, members, excludedMembers, percentages, fractions, counts, customAmounts]);
 
+  function handleAutoAdjustPercentages() {
+    const next = autoAdjustPercentages({
+      members,
+      excludedMembers,
+      percentages,
+      payerId: paidById || currentUser?.id,
+    });
+    setPercentages(next);
+  }
+
   if (!isOpen) return null;
 
   async function handleAIParse() {
@@ -249,22 +282,26 @@ export default function LogExpenseFABModal({
 
     setIsParsing(true);
     setError('');
-    setSuccessMsg('');
-    setParsedExpense(null);
-
     try {
-      const { data } = await api.post(`/api/groups/${targetId}/expenses/parse`, {
-        text: aiText.trim(),
+      const { data } = await api.post(`/api/groups/${targetId}/expenses/parse-ai`, {
+        text: aiText,
       });
       const parsed = data.parsed;
       setParsedExpense(parsed);
-      setSuccessMsg('✨ Successfully parsed details! Review below and confirm.');
 
-      // Match parsed payer
-      let targetPayerId = paidById || currentUser?.id;
-      if (parsed?.payerName) {
+      // Populate manual form with AI parsed details
+      if (parsed.amount) {
+        setAmount(String(parsed.amount));
+      }
+      if (parsed.description) {
+        setDescription(parsed.description);
+      }
+      if (parsed.category) {
+        setCategory(parsed.category);
+      }
+      if (parsed.payerName) {
         const pName = parsed.payerName.trim().toLowerCase();
-        const matchedPayer = members.find((m) => {
+        const matched = members.find((m) => {
           const name = (m.name || '').trim().toLowerCase();
           if (name === pName) return true;
           if (pName === 'you' || pName === 'me' || pName === 'myself' || pName === 'i') {
@@ -272,31 +309,26 @@ export default function LogExpenseFABModal({
           }
           return name.includes(pName) || pName.includes(name);
         });
-        if (matchedPayer) {
-          targetPayerId = matchedPayer.id;
-          setPaidById(matchedPayer.id);
+        if (matched) {
+          setPaidById(matched.id);
         }
       }
 
-      // Populate manual form with AI parsed data and exact splits from splitSuggestion
-      if (parsed?.amount) setAmount(String(parsed.amount));
-      if (parsed?.description) setDescription(parsed.description);
-      if (parsed?.category) setCategory(parsed.category);
-
-      if (parsed?.splitSuggestion && Array.isArray(parsed.splitSuggestion) && parsed.splitSuggestion.length > 0) {
+      // Populate custom split amounts from splitSuggestion
+      if (parsed.splitSuggestion && Array.isArray(parsed.splitSuggestion) && parsed.splitSuggestion.length > 0) {
         setSplitMode('custom');
         const nextCustom = {};
         const nextExcluded = {};
 
         members.forEach((m) => {
-          const mName = (m.name || '').trim().toLowerCase();
+          const name = (m.name || '').trim().toLowerCase();
           const match = parsed.splitSuggestion.find((s) => {
             const label = (s.label || '').trim().toLowerCase();
-            if (label === mName) return true;
+            if (label === name) return true;
             if (label === 'you' || label === 'me' || label === 'myself' || label === 'i') {
               return m.id === currentUser?.id;
             }
-            return mName.includes(label) || label.includes(mName);
+            return name.includes(label) || label.includes(name);
           });
 
           if (match && !match.excluded && Number(match.share) > 0) {
@@ -320,21 +352,9 @@ export default function LogExpenseFABModal({
 
   async function handleSubmitExpense(e) {
     if (e) e.preventDefault();
-    const targetId = initialGroupId || selectedGroupId;
-    if (!targetId) {
-      setError('Please select a group.');
-      return;
-    }
-
     const numAmount = Number(amount);
     if (!numAmount || numAmount <= 0) {
       setError('Please enter a valid amount.');
-      return;
-    }
-
-    // Validate active split mode
-    if (!splitValidation.isValid) {
-      setError(splitValidation.message || 'Please balance the splits before submitting.');
       return;
     }
 
@@ -342,6 +362,39 @@ export default function LogExpenseFABModal({
     setError('');
 
     try {
+      if (isPersonalExpense) {
+        const personalGroupId = await getOrCreatePersonalGroup();
+        const payloadPayer = currentUser?.id || paidById;
+        await api.post(`/api/groups/${personalGroupId}/expenses`, {
+          amount: numAmount,
+          category: category || 'General',
+          description: description.trim() || category || 'Personal Expense',
+          paidById: payloadPayer,
+          splits: [{ userId: payloadPayer, share: numAmount }],
+        });
+
+        setSuccessMsg('✓ Personal expense recorded successfully!');
+        setTimeout(() => {
+          if (onExpenseAdded) onExpenseAdded();
+          onClose();
+        }, 500);
+        return;
+      }
+
+      const targetId = initialGroupId || selectedGroupId;
+      if (!targetId) {
+        setError('Please select a group.');
+        setSubmitting(false);
+        return;
+      }
+
+      // Validate active split mode
+      if (!splitValidation.isValid) {
+        setError(splitValidation.message || 'Please balance the splits before submitting.');
+        setSubmitting(false);
+        return;
+      }
+
       const payloadPayer = paidById || currentUser?.id || members[0]?.id;
       const splits = Object.entries(memberShares)
         .filter(([userId]) => !excludedMembers[userId])
@@ -350,10 +403,10 @@ export default function LogExpenseFABModal({
           share: Number(share),
         }));
 
-      // Absorb small rounding discrepancy into payer's share
+      // Absorb rounding discrepancy less than 1 rupee (< ₹1.00) into payer's share
       const totalSplitsSum = splits.reduce((sum, s) => sum + s.share, 0);
       const diff = Number((numAmount - totalSplitsSum).toFixed(2));
-      if (Math.abs(diff) <= 0.02 && diff !== 0) {
+      if (Math.abs(diff) < 1.00 && diff !== 0) {
         const buyerSplit = splits.find((s) => s.userId === payloadPayer);
         if (buyerSplit) {
           buyerSplit.share = Number((buyerSplit.share + diff).toFixed(2));
@@ -384,11 +437,30 @@ export default function LogExpenseFABModal({
 
   async function handleConfirmParsedAI() {
     if (!parsedExpense) return;
-    const targetId = initialGroupId || selectedGroupId;
     setSubmitting(true);
     setError('');
 
     try {
+      if (isPersonalExpense) {
+        const personalGroupId = await getOrCreatePersonalGroup();
+        const payloadPayer = currentUser?.id || paidById;
+        await api.post(`/api/groups/${personalGroupId}/expenses`, {
+          amount: Number(parsedExpense.amount),
+          category: parsedExpense.category || 'Food',
+          description: parsedExpense.description || 'Personal Expense',
+          paidById: payloadPayer,
+          splits: [{ userId: payloadPayer, share: Number(parsedExpense.amount) }],
+        });
+
+        setSuccessMsg('✓ Personal expense recorded with AI parse!');
+        setTimeout(() => {
+          if (onExpenseAdded) onExpenseAdded();
+          onClose();
+        }, 500);
+        return;
+      }
+
+      const targetId = initialGroupId || selectedGroupId;
       let payloadPayer = paidById || currentUser?.id || members[0]?.id;
       if (parsedExpense.payerName) {
         const pName = parsedExpense.payerName.trim().toLowerCase();
@@ -435,10 +507,10 @@ export default function LogExpenseFABModal({
         splits = members.map((m) => ({ userId: m.id, share: sh }));
       }
 
-      // Absorb rounding discrepancy into payer's share
+      // Absorb rounding discrepancy less than 1 rupee (< ₹1.00) into payer's share
       const totalSplitsSum = splits.reduce((sum, s) => sum + s.share, 0);
       const diff = Number((Number(parsedExpense.amount) - totalSplitsSum).toFixed(2));
-      if (Math.abs(diff) <= 0.02 && diff !== 0) {
+      if (Math.abs(diff) < 1.00 && diff !== 0) {
         const buyerSplit = splits.find((s) => s.userId === payloadPayer);
         if (buyerSplit) {
           buyerSplit.share = Number((buyerSplit.share + diff).toFixed(2));
@@ -534,15 +606,63 @@ export default function LogExpenseFABModal({
         {error && <div className="error-text" style={{ marginTop: 'var(--space-2)', width: '100%', boxSizing: 'border-box' }}>{error}</div>}
         {successMsg && <div className="success-text" style={{ marginTop: 'var(--space-2)', width: '100%', boxSizing: 'border-box' }}>{successMsg}</div>}
 
-        {/* ── Group Selector (if used from dashboard) ── */}
-        {!initialGroupId && (
+        {/* ── Expense Type Toggle: Group vs Personal (Self) ── */}
+        <div style={{ display: 'flex', background: 'var(--bg-subtle)', padding: '3px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-subtle)', marginTop: 'var(--space-2)', width: '100%', boxSizing: 'border-box' }}>
+          <button
+            type="button"
+            className={`btn-ghost ${!isPersonalExpense ? 'active' : ''}`}
+            onClick={() => setIsPersonalExpense(false)}
+            style={{
+              flex: 1,
+              height: '32px',
+              fontSize: '12.5px',
+              fontWeight: 600,
+              borderRadius: 'var(--radius-xs)',
+              background: !isPersonalExpense ? 'var(--bg-surface)' : 'transparent',
+              color: !isPersonalExpense ? 'var(--text-primary)' : 'var(--text-secondary)',
+              boxShadow: !isPersonalExpense ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+            }}
+          >
+            👥 Group Expense
+          </button>
+          <button
+            type="button"
+            className={`btn-ghost ${isPersonalExpense ? 'active' : ''}`}
+            onClick={() => {
+              setIsPersonalExpense(true);
+              if (currentUser?.id) setPaidById(currentUser.id);
+            }}
+            style={{
+              flex: 1,
+              height: '32px',
+              fontSize: '12.5px',
+              fontWeight: 600,
+              borderRadius: 'var(--radius-xs)',
+              background: isPersonalExpense ? 'var(--bg-surface)' : 'transparent',
+              color: isPersonalExpense ? 'var(--text-primary)' : 'var(--text-secondary)',
+              boxShadow: isPersonalExpense ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+            }}
+          >
+            👤 Personal (Self / Only Me)
+          </button>
+        </div>
+
+        {/* ── Group Selector (if in Group mode & not fixed groupId) ── */}
+        {!isPersonalExpense && !initialGroupId && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: 'var(--space-2)', width: '100%', boxSizing: 'border-box' }}>
             <label style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-secondary)' }}>
               Choose Group:
             </label>
             <select
               value={selectedGroupId}
-              onChange={(e) => setSelectedGroupId(e.target.value)}
+              onChange={(e) => {
+                if (e.target.value === '__personal__') {
+                  setIsPersonalExpense(true);
+                  if (currentUser?.id) setPaidById(currentUser.id);
+                } else {
+                  setSelectedGroupId(e.target.value);
+                }
+              }}
               style={{ width: '100%', height: '40px', borderRadius: 'var(--radius-sm)', boxSizing: 'border-box' }}
             >
               {groups.map((g) => (
@@ -550,7 +670,33 @@ export default function LogExpenseFABModal({
                   {g.name}
                 </option>
               ))}
+              <option value="__personal__">👤 + Personal Expense (Self / Only You)</option>
             </select>
+          </div>
+        )}
+
+        {/* ── Personal Tracker Notice Banner ── */}
+        {isPersonalExpense && (
+          <div
+            style={{
+              marginTop: 'var(--space-2)',
+              padding: '8px 12px',
+              background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.08) 0%, rgba(168, 85, 247, 0.08) 100%)',
+              border: '1px solid rgba(99, 102, 241, 0.25)',
+              borderRadius: 'var(--radius-sm)',
+              fontSize: '12.5px',
+              color: 'var(--text-primary)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              width: '100%',
+              boxSizing: 'border-box',
+            }}
+          >
+            <span style={{ fontSize: '16px' }}>👤</span>
+            <div style={{ lineHeight: 1.35 }}>
+              <strong>Personal Expense Tracker:</strong> 100% recorded for your own spending analytics & budget.
+            </div>
           </div>
         )}
 
@@ -585,235 +731,304 @@ export default function LogExpenseFABModal({
               </label>
             </div>
 
-            {/* Paid By Dropdown - Clean Alphabetical Order */}
-            <label className="form-label" style={{ margin: 0, width: '100%', boxSizing: 'border-box' }}>
-              Paid By
-              <select
-                value={paidById || (currentUser?.id || (sortedMembers[0] ? sortedMembers[0].id : ''))}
-                onChange={(e) => setPaidById(e.target.value)}
-                style={{
-                  width: '100%',
-                  height: '42px',
-                  borderRadius: 'var(--radius-md)',
-                  padding: '0 12px',
-                  fontSize: '15px',
-                  fontWeight: 600,
-                  background: 'var(--bg-surface)',
-                  border: '1px solid var(--border-subtle)',
-                  color: 'var(--text-primary)',
-                  boxSizing: 'border-box',
-                  cursor: 'pointer',
-                  pointerEvents: 'auto',
-                }}
-              >
-                {sortedMembers.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.name || m.email} {m.id === currentUser?.id ? '(You)' : ''}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            {/* Category Chips */}
+            {/* Category Picker with Predefined Chips & Custom Category */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', width: '100%', boxSizing: 'border-box' }}>
               <span style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-secondary)' }}>
                 Category
               </span>
-              <div className="category-chips-grid" style={{ gap: '6px', width: '100%', boxSizing: 'border-box' }}>
-                {PREDEFINED_CATEGORIES.map((cat) => (
-                  <button
-                    key={cat.label}
-                    type="button"
-                    className={`category-chip${category === cat.label ? ' active' : ''}`}
-                    onClick={() => setCategory(cat.label)}
-                    style={{ padding: '4px 10px', fontSize: '12px' }}
-                  >
-                    <span>{cat.icon}</span>
-                    <span>{cat.label}</span>
-                  </button>
-                ))}
-              </div>
+              <CategoryPicker
+                value={category}
+                onChange={setCategory}
+                idPrefix="log-expense-cat"
+              />
             </div>
 
-            {/* Split Mode Selector (Equal, Percentage %, Fraction 1/2, Shares 🔢, Exact ₹) */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', width: '100%', boxSizing: 'border-box' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '4px', width: '100%', boxSizing: 'border-box' }}>
-                <span style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-secondary)' }}>
-                  Split Method
-                </span>
-                <span
+            {/* If Personal Expense: Show Dedicated Personal Breakdown Card */}
+            {isPersonalExpense ? (
+              <div
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '10px',
+                  background: 'var(--bg-subtle)',
+                  padding: '14px',
+                  borderRadius: 'var(--radius-md)',
+                  border: '1px solid var(--border-subtle)',
+                  width: '100%',
+                  boxSizing: 'border-box',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span style={{ fontSize: '15px' }}>👤</span>
+                    <strong style={{ fontSize: '13px', color: 'var(--text-primary)' }}>Personal Solo Allocation</strong>
+                  </div>
+                  <span
+                    style={{
+                      fontSize: '11px',
+                      fontWeight: 700,
+                      padding: '2px 8px',
+                      borderRadius: 'var(--radius-full)',
+                      background: 'rgba(99, 102, 241, 0.12)',
+                      color: 'var(--primary)',
+                      border: '1px solid rgba(99, 102, 241, 0.3)',
+                    }}
+                  >
+                    100% Self
+                  </span>
+                </div>
+                <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.4 }}>
+                  No group debts or splits are created. This transaction is categorized directly into your personal spending analytics.
+                </p>
+                <div
                   style={{
-                    fontSize: '11.5px',
-                    fontWeight: 700,
-                    padding: '2px 8px',
-                    borderRadius: 'var(--radius-full)',
-                    background: modeMetrics.isError ? 'var(--warning-bg)' : 'var(--success-bg)',
-                    color: modeMetrics.isError ? 'var(--warning-text)' : 'var(--success-text)',
-                    border: `1px solid ${modeMetrics.isError ? 'var(--warning-border)' : 'var(--success-border)'}`,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    paddingTop: '8px',
+                    borderTop: '1px solid var(--border-subtle)',
                   }}
                 >
-                  {modeMetrics.text} • {modeMetrics.subText}
-                </span>
-              </div>
-
-              <div className="split-mode-selector-grid" style={{ width: '100%', boxSizing: 'border-box' }}>
-                {[
-                  { id: 'custom', label: '₹ Amount' },
-                  { id: 'percentage', label: '% Percentage' },
-                  { id: 'fraction', label: '½ Fraction' },
-                  { id: 'count', label: '🔢 Shares' },
-                ].map((mode) => (
-                  <button
-                    key={mode.id}
-                    type="button"
-                    className={`split-mode-btn${splitMode === mode.id ? ' active' : ''}`}
-                    onClick={() => handleSplitModeChange(mode.id)}
+                  <span style={{ fontSize: '12.5px', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                    Your Net Cost:
+                  </span>
+                  <span
+                    style={{
+                      fontWeight: 800,
+                      fontSize: '16px',
+                      color: 'var(--text-primary)',
+                      fontVariantNumeric: 'tabular-nums',
+                    }}
                   >
-                    {mode.label}
-                  </button>
-                ))}
+                    ₹{Number(amount || 0).toFixed(2)}
+                  </span>
+                </div>
               </div>
-            </div>
-
-            {/* Member Shares Breakdown in Alphabetical Order with Live Input Controls */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '220px', overflowY: 'auto', overflowX: 'hidden', background: 'var(--bg-subtle)', padding: 'var(--space-3)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)', WebkitOverflowScrolling: 'touch', width: '100%', boxSizing: 'border-box' }}>
-              {sortedMembers.map((m) => {
-                const isExcluded = Boolean(excludedMembers[m.id]);
-                const isCurrent = m.id === currentUser?.id;
-                const isPayer = m.id === paidById;
-
-                return (
-                  <div
-                    key={m.id}
-                    className={`split-member-item-row${isExcluded ? ' excluded' : ''}`}
-                    style={{ width: '100%', boxSizing: 'border-box' }}
+            ) : (
+              <>
+                {/* Paid By Dropdown - Clean Alphabetical Order */}
+                <label className="form-label" style={{ margin: 0, width: '100%', boxSizing: 'border-box' }}>
+                  Paid By
+                  <select
+                    value={paidById || (currentUser?.id || (sortedMembers[0] ? sortedMembers[0].id : ''))}
+                    onChange={(e) => setPaidById(e.target.value)}
+                    style={{
+                      width: '100%',
+                      height: '42px',
+                      borderRadius: 'var(--radius-md)',
+                      padding: '0 12px',
+                      fontSize: '15px',
+                      fontWeight: 600,
+                      background: 'var(--bg-surface)',
+                      border: '1px solid var(--border-subtle)',
+                      color: 'var(--text-primary)',
+                      boxSizing: 'border-box',
+                      cursor: 'pointer',
+                      pointerEvents: 'auto',
+                    }}
                   >
-                    {/* Member Info & Checkbox */}
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', flex: '1 1 auto', minWidth: 0, margin: 0 }}>
-                      <input
-                        type="checkbox"
-                        checked={!isExcluded}
-                        onChange={(e) => {
-                          const checked = e.target.checked;
-                          setExcludedMembers((prev) => ({ ...prev, [m.id]: !checked }));
-                        }}
-                      />
-                      <div className="group-avatar-mini" style={{ width: '26px', height: '26px', fontSize: '11px', flexShrink: 0 }}>
-                        {m.name ? m.name.charAt(0).toUpperCase() : 'U'}
-                      </div>
-                      <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'hidden' }}>
-                        <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {m.name || m.email}
-                        </span>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginTop: '1px' }}>
-                          {isCurrent && <span className="you-pill" style={{ fontSize: '9.5px', padding: '1px 4px' }}>You</span>}
-                          {isPayer && <span className="payer-active-badge">👑 Payer</span>}
-                        </div>
-                      </div>
-                    </label>
+                    {sortedMembers.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.name || m.email} {m.id === currentUser?.id ? '(You)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                </label>
 
-                    {/* Active Mode Interactive Input */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
-                      {/* Percentage Input */}
-                      {splitMode === 'percentage' && (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
-                          <input
-                            type="number"
-                            min="0"
-                            max="100"
-                            step="any"
-                            placeholder="0"
-                            className="split-input-pill"
-                            style={{ width: '64px', textAlign: 'right', fontWeight: 600 }}
-                            value={percentages[m.id] ?? ''}
-                            disabled={isExcluded}
-                            onChange={(e) => {
-                              const val = e.target.value;
-                              setPercentages((prev) => ({ ...prev, [m.id]: val }));
-                            }}
-                          />
-                          <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>%</span>
-                        </div>
-                      )}
-
-                      {/* Fraction Input (e.g. 1/2, 1/3, 1/4) */}
-                      {splitMode === 'fraction' && (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
-                          <input
-                            type="text"
-                            placeholder="1/2"
-                            className="split-input-pill"
-                            style={{ width: '64px', textAlign: 'center', fontWeight: 600 }}
-                            value={fractions[m.id] ?? ''}
-                            disabled={isExcluded}
-                            onChange={(e) => {
-                              const val = e.target.value;
-                              setFractions((prev) => ({ ...prev, [m.id]: val }));
-                            }}
-                          />
-                        </div>
-                      )}
-
-                      {/* Shares / Count Input */}
-                      {splitMode === 'count' && (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                          <input
-                            type="number"
-                            min="0"
-                            step="1"
-                            placeholder="1"
-                            className="split-input-pill"
-                            style={{ width: '54px', textAlign: 'center', fontWeight: 600 }}
-                            value={counts[m.id] ?? ''}
-                            disabled={isExcluded}
-                            onChange={(e) => {
-                              const val = e.target.value;
-                              setCounts((prev) => ({ ...prev, [m.id]: val }));
-                            }}
-                          />
-                          <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>shares</span>
-                        </div>
-                      )}
-
-                      {/* Exact Custom Amount Input */}
-                      {splitMode === 'custom' && (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
-                          <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>₹</span>
-                          <input
-                            type="number"
-                            min="0"
-                            step="0.01"
-                            placeholder="0.00"
-                            className="split-input-pill"
-                            style={{ width: '74px', textAlign: 'right', fontWeight: 600 }}
-                            value={customAmounts[m.id] ?? ''}
-                            disabled={isExcluded}
-                            onChange={(e) => {
-                              const val = e.target.value;
-                              setCustomAmounts((prev) => ({ ...prev, [m.id]: val }));
-                            }}
-                          />
-                        </div>
-                      )}
-
-                      {/* Resulting Share Value */}
-                      <strong
+                {/* Split Mode Selector (Equal, Percentage %, Fraction 1/2, Shares 🔢, Exact ₹) */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', width: '100%', boxSizing: 'border-box' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '4px', width: '100%', boxSizing: 'border-box' }}>
+                    <span style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-secondary)' }}>
+                      Split Method
+                    </span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <span
                         style={{
-                          fontVariantNumeric: 'tabular-nums',
-                          minWidth: '70px',
-                          textAlign: 'right',
-                          fontSize: '13.5px',
-                          color: isExcluded ? 'var(--text-muted)' : 'var(--text-primary)',
-                          textDecoration: isExcluded ? 'line-through' : 'none',
+                          fontSize: '11.5px',
+                          fontWeight: 700,
+                          padding: '2px 8px',
+                          borderRadius: 'var(--radius-full)',
+                          background: modeMetrics.isError ? 'var(--warning-bg)' : 'var(--success-bg)',
+                          color: modeMetrics.isError ? 'var(--warning-text)' : 'var(--success-text)',
+                          border: `1px solid ${modeMetrics.isError ? 'var(--warning-border)' : 'var(--success-border)'}`,
                         }}
                       >
-                        ₹{memberShares[m.id] || '0.00'}
-                      </strong>
+                        {modeMetrics.text} • {modeMetrics.subText}
+                      </span>
+                      {splitMode === 'percentage' && modeMetrics.diff !== 0 && (
+                        <button
+                          type="button"
+                          onClick={handleAutoAdjustPercentages}
+                          className="btn-ghost"
+                          style={{ fontSize: '11px', padding: '2px 6px', height: '22px', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-xs)' }}
+                          title="Automatically adjust remaining percentage to payer"
+                        >
+                          ⚡ Auto-Adjust
+                        </button>
+                      )}
                     </div>
                   </div>
-                );
-              })}
-            </div>
+
+                  <div className="split-mode-selector-grid" style={{ width: '100%', boxSizing: 'border-box' }}>
+                    {[
+                      { id: 'custom', label: '₹ Amount' },
+                      { id: 'percentage', label: '% Percentage' },
+                      { id: 'fraction', label: '½ Fraction' },
+                      { id: 'count', label: '🔢 Shares' },
+                    ].map((mode) => (
+                      <button
+                        key={mode.id}
+                        type="button"
+                        className={`split-mode-btn${splitMode === mode.id ? ' active' : ''}`}
+                        onClick={() => handleSplitModeChange(mode.id)}
+                      >
+                        {mode.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Member Shares Breakdown in Alphabetical Order with Live Input Controls */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '220px', overflowY: 'auto', overflowX: 'hidden', background: 'var(--bg-subtle)', padding: 'var(--space-3)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)', WebkitOverflowScrolling: 'touch', width: '100%', boxSizing: 'border-box' }}>
+                  {sortedMembers.map((m) => {
+                    const isExcluded = Boolean(excludedMembers[m.id]);
+                    const isCurrent = m.id === currentUser?.id;
+                    const isPayer = m.id === paidById;
+
+                    return (
+                      <div
+                        key={m.id}
+                        className={`split-member-item-row${isExcluded ? ' excluded' : ''}`}
+                        style={{ width: '100%', boxSizing: 'border-box' }}
+                      >
+                        {/* Member Info & Checkbox */}
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', flex: '1 1 auto', minWidth: 0, margin: 0 }}>
+                          <input
+                            type="checkbox"
+                            checked={!isExcluded}
+                            onChange={(e) => {
+                              const checked = e.target.checked;
+                              setExcludedMembers((prev) => ({ ...prev, [m.id]: !checked }));
+                            }}
+                          />
+                          <div className="group-avatar-mini" style={{ width: '26px', height: '26px', fontSize: '11px', flexShrink: 0 }}>
+                            {m.name ? m.name.charAt(0).toUpperCase() : 'U'}
+                          </div>
+                          <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'hidden' }}>
+                            <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {m.name || m.email}
+                            </span>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginTop: '1px' }}>
+                              {isCurrent && <span className="you-pill" style={{ fontSize: '9.5px', padding: '1px 4px' }}>You</span>}
+                              {isPayer && <span className="payer-active-badge">👑 Payer</span>}
+                            </div>
+                          </div>
+                        </label>
+
+                        {/* Active Mode Interactive Input */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+                          {/* Percentage Input */}
+                          {splitMode === 'percentage' && (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
+                              <input
+                                type="number"
+                                min="0"
+                                max="100"
+                                step="any"
+                                placeholder="0"
+                                className="split-input-pill"
+                                style={{ width: '64px', textAlign: 'right', fontWeight: 600 }}
+                                value={percentages[m.id] ?? ''}
+                                disabled={isExcluded}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setPercentages((prev) => ({ ...prev, [m.id]: val }));
+                                }}
+                              />
+                              <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>%</span>
+                            </div>
+                          )}
+
+                          {/* Fraction Input (e.g. 1/2, 1/3, 1/4) */}
+                          {splitMode === 'fraction' && (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
+                              <input
+                                type="text"
+                                placeholder="1/2"
+                                className="split-input-pill"
+                                style={{ width: '64px', textAlign: 'center', fontWeight: 600 }}
+                                value={fractions[m.id] ?? ''}
+                                disabled={isExcluded}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setFractions((prev) => ({ ...prev, [m.id]: val }));
+                                }}
+                              />
+                            </div>
+                          )}
+
+                          {/* Shares / Count Input */}
+                          {splitMode === 'count' && (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                              <input
+                                type="number"
+                                min="0"
+                                step="1"
+                                placeholder="1"
+                                className="split-input-pill"
+                                style={{ width: '54px', textAlign: 'center', fontWeight: 600 }}
+                                value={counts[m.id] ?? ''}
+                                disabled={isExcluded}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setCounts((prev) => ({ ...prev, [m.id]: val }));
+                                }}
+                              />
+                              <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>shares</span>
+                            </div>
+                          )}
+
+                          {/* Exact Custom Amount Input */}
+                          {splitMode === 'custom' && (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
+                              <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>₹</span>
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                placeholder="0.00"
+                                className="split-input-pill"
+                                style={{ width: '74px', textAlign: 'right', fontWeight: 600 }}
+                                value={customAmounts[m.id] ?? ''}
+                                disabled={isExcluded}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setCustomAmounts((prev) => ({ ...prev, [m.id]: val }));
+                                }}
+                              />
+                            </div>
+                          )}
+
+                          {/* Resulting Share Value */}
+                          <strong
+                            style={{
+                              fontVariantNumeric: 'tabular-nums',
+                              minWidth: '70px',
+                              textAlign: 'right',
+                              fontSize: '13.5px',
+                              color: isExcluded ? 'var(--text-muted)' : 'var(--text-primary)',
+                              textDecoration: isExcluded ? 'line-through' : 'none',
+                            }}
+                          >
+                            ₹{memberShares[m.id] || '0.00'}
+                          </strong>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            )}
 
             {/* Submit Button */}
             <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: 'var(--space-2)' }}>

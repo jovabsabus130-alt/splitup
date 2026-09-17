@@ -115,10 +115,10 @@ export default function EditExpenseModal({ groupId, expense, members, currentUse
           share: Number(share),
         }));
 
-      // Absorb micro rounding discrepancy into payer's share
+      // Absorb micro rounding discrepancy less than 1 rupee (< ₹1.00) into payer's share
       const totalSplitsSum = splits.reduce((sum, s) => sum + s.share, 0);
       const diff = Number((Number(amount) - totalSplitsSum).toFixed(2));
-      if (Math.abs(diff) <= 0.01 && diff !== 0) {
+      if (Math.abs(diff) < 1.00 && diff !== 0) {
         const payerSplit = splits.find((s) => s.userId === paidById);
         if (payerSplit) {
           payerSplit.share = Number((payerSplit.share + diff).toFixed(2));

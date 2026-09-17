@@ -38,8 +38,8 @@ export default function CategoryPicker({ value, onChange, required = true, idPre
   }
 
   return (
-    <div className="category-picker-container">
-      <div className="category-chips-grid">
+    <div className="category-picker-container" style={{ width: '100%', boxSizing: 'border-box' }}>
+      <div className="category-chips-grid" style={{ gap: '6px', width: '100%', boxSizing: 'border-box' }}>
         {PREDEFINED_CATEGORIES.map((cat) => {
           const isSelected = !isCustomMode && value?.toLowerCase() === cat.label.toLowerCase();
           return (
@@ -47,8 +47,9 @@ export default function CategoryPicker({ value, onChange, required = true, idPre
               key={cat.label}
               type="button"
               id={`${idPrefix}-${cat.label.toLowerCase().replace(/[^a-z0-9]/g, '-')}`}
-              className={`category-chip ${isSelected ? 'selected' : ''}`}
+              className={`category-chip ${isSelected ? 'active selected' : ''}`}
               onClick={() => handleSelectPredefined(cat.label)}
+              style={{ padding: '4px 10px', fontSize: '12px', cursor: 'pointer' }}
             >
               <span className="category-chip-icon">{cat.icon}</span>
               <span className="category-chip-label">{cat.label}</span>
@@ -59,8 +60,9 @@ export default function CategoryPicker({ value, onChange, required = true, idPre
         <button
           type="button"
           id={`${idPrefix}-custom-toggle`}
-          className={`category-chip ${isCustomMode ? 'selected' : ''}`}
+          className={`category-chip ${isCustomMode ? 'active selected' : ''}`}
           onClick={handleToggleCustom}
+          style={{ padding: '4px 10px', fontSize: '12px', cursor: 'pointer' }}
         >
           <span className="category-chip-icon">✏️</span>
           <span className="category-chip-label">Custom</span>
@@ -68,16 +70,26 @@ export default function CategoryPicker({ value, onChange, required = true, idPre
       </div>
 
       {isCustomMode && (
-        <div className="custom-category-input-wrapper">
+        <div className="custom-category-input-wrapper" style={{ marginTop: '8px', width: '100%' }}>
           <input
             type="text"
             id={`${idPrefix}-custom-input`}
             className="custom-category-input"
-            placeholder="Type custom category (e.g. Gym, Pet Care, Tuition)..."
+            placeholder="Type custom category (e.g. Gym, Pet Care, Tuition, Gifts)..."
             value={customInput}
             onChange={handleCustomChange}
             autoFocus
             required={required}
+            style={{
+              width: '100%',
+              padding: '8px 12px',
+              fontSize: '13px',
+              borderRadius: 'var(--radius-md)',
+              border: '1px solid var(--border-medium)',
+              background: 'var(--bg-surface)',
+              color: 'var(--text-primary)',
+              boxSizing: 'border-box',
+            }}
           />
         </div>
       )}

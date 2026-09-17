@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import ExpenseHistoryModal from '../components/ExpenseHistoryModal';
 import TransactionConcernModal from '../components/TransactionConcernModal';
+import TransactionDetailModal from '../components/TransactionDetailModal';
 import api from '../lib/api';
 
 export default function HistoryPage() {
@@ -22,6 +23,7 @@ export default function HistoryPage() {
   const [error, setError] = useState('');
   const [expandedTxId, setExpandedTxId] = useState(null);
   const [currentUserId, setCurrentUserId] = useState(null);
+  const [detailExpense, setDetailExpense] = useState(null);
   const [concernExpense, setConcernExpense] = useState(null);
   const [historyExpense, setHistoryExpense] = useState(null);
 
@@ -366,6 +368,7 @@ export default function HistoryPage() {
               <div
                 key={tx.id}
                 className="card"
+                onClick={() => setDetailExpense(tx)}
                 style={{
                   padding: 'var(--space-4)',
                   gap: 'var(--space-3)',
@@ -374,13 +377,16 @@ export default function HistoryPage() {
                   borderRadius: 'var(--radius-md)',
                   opacity: isDeleted ? 0.85 : 1,
                   transition: 'border-color 0.15s ease, box-shadow 0.15s ease',
+                  cursor: 'pointer',
                 }}
+                title="Click to view full transaction details"
               >
                 {/* ── Card Header: Group Badge & Date ── */}
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '6px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
                     <Link
                       to={`/groups/${tx.group.id}`}
+                      onClick={(e) => e.stopPropagation()}
                       style={{
                         display: 'inline-flex',
                         alignItems: 'center',
@@ -413,7 +419,10 @@ export default function HistoryPage() {
                           fontWeight: 700,
                           cursor: 'pointer',
                         }}
-                        onClick={() => setHistoryExpense(tx)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setHistoryExpense(tx);
+                        }}
                         title="Click to view deletion audit details"
                       >
                         DELETED 🗑️
@@ -430,7 +439,10 @@ export default function HistoryPage() {
                           borderColor: 'var(--warning-border)',
                           cursor: 'pointer',
                         }}
-                        onClick={() => setHistoryExpense(tx)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setHistoryExpense(tx);
+                        }}
                         title="Click to view edit history"
                       >
                         Edited 📝
@@ -449,7 +461,10 @@ export default function HistoryPage() {
                           borderColor: tx.concerns.some((c) => c.status === 'pending') ? 'var(--warning-border)' : 'var(--success-border)',
                           cursor: 'pointer',
                         }}
-                        onClick={() => setConcernExpense(tx)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setConcernExpense(tx);
+                        }}
                         title="Click to view flags and concerns on this transaction"
                       >
                         🚩 {tx.concerns.some((c) => c.status === 'pending') ? `${tx.concerns.filter((c) => c.status === 'pending').length} Flagged` : 'Resolved'}
@@ -472,8 +487,12 @@ export default function HistoryPage() {
                         color: isDeleted ? 'var(--text-muted)' : 'var(--text-primary)',
                         textDecoration: isDeleted ? 'line-through' : 'none',
                         margin: 0,
-                        wordBreak: 'break-word',
+                        maxWidth: '100%',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
                       }}
+                      title={tx.description || tx.category}
                     >
                       {tx.description || tx.category}
                     </h3>
@@ -564,7 +583,10 @@ export default function HistoryPage() {
                         alignItems: 'center',
                         gap: '4px',
                       }}
-                      onClick={() => setExpandedTxId(isExpanded ? null : tx.id)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setExpandedTxId(isExpanded ? null : tx.id);
+                      }}
                       aria-expanded={isExpanded}
                     >
                       <span>{isExpanded ? '▲ Hide' : '▼ View'} Splits ({tx.participants.length})</span>
@@ -585,7 +607,10 @@ export default function HistoryPage() {
                           alignItems: 'center',
                           gap: '4px',
                         }}
-                        onClick={() => setHistoryExpense(tx)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setHistoryExpense(tx);
+                        }}
                         title="View complete audit logs and previous states"
                       >
                         <span>📜</span>
@@ -609,7 +634,10 @@ export default function HistoryPage() {
                             borderColor: (tx.concerns && tx.concerns.length > 0) ? 'var(--warning-border)' : 'transparent',
                             background: (tx.concerns && tx.concerns.length > 0) ? 'var(--warning-bg)' : 'transparent',
                           }}
-                          onClick={() => setConcernExpense(tx)}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setConcernExpense(tx);
+                          }}
                           title="Flag or view concerns on this transaction"
                         >
                           <span>🚩</span>
@@ -630,7 +658,10 @@ export default function HistoryPage() {
                             borderColor: 'var(--warning-border)',
                             background: 'var(--warning-bg)',
                           }}
-                          onClick={() => setConcernExpense(tx)}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setConcernExpense(tx);
+                          }}
                           title="View and respond to concerns raised by group members"
                         >
                           <span>🚩</span>
@@ -642,6 +673,7 @@ export default function HistoryPage() {
 
                   <Link
                     to={`/groups/${tx.group.id}`}
+                    onClick={(e) => e.stopPropagation()}
                     className="btn-ghost"
                     style={{ height: '28px', fontSize: '12px', padding: '0 6px', color: 'var(--accent-primary)' }}
                   >
@@ -724,6 +756,19 @@ export default function HistoryPage() {
             </div>
           )}
         </div>
+      )}
+
+      {/* ── Transaction Detail Modal ── */}
+      {detailExpense && (
+        <TransactionDetailModal
+          expense={detailExpense}
+          group={detailExpense.group}
+          members={detailExpense.participants?.map((p) => ({ id: p.userId, name: p.name })) || []}
+          currentUserId={currentUserId}
+          onClose={() => setDetailExpense(null)}
+          onFlag={(exp) => setConcernExpense(exp)}
+          onHistory={(exp) => setHistoryExpense(exp)}
+        />
       )}
 
       {/* ── Expense History Audit Modal ── */}
