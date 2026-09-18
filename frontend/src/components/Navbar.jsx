@@ -12,15 +12,23 @@ export default function Navbar({ groupName, groupId }) {
         const u = JSON.parse(userStr);
         if (u.name) setUserName(u.name);
       } catch {}
+    } else if (window.Clerk && window.Clerk.user) {
+      const cu = window.Clerk.user;
+      const name = cu.fullName || cu.firstName || cu.primaryEmailAddress?.emailAddress;
+      if (name) setUserName(name);
     }
   }, []);
 
   function logout() {
+    if (window.Clerk && window.Clerk.signOut) {
+      window.Clerk.signOut();
+    }
     localStorage.removeItem('token');
     localStorage.removeItem('splitup_token');
     localStorage.removeItem('splitup_user');
     navigate('/login');
   }
+
 
   return (
     <header className="navbar">

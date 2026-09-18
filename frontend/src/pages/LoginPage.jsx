@@ -3,7 +3,11 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { SignIn } from '@clerk/clerk-react';
 import api from '../lib/api';
 
-const isClerkEnabled = !!import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
+const isClerkEnabled = Boolean(
+  import.meta.env.VITE_CLERK_PUBLISHABLE_KEY ||
+  import.meta.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+);
+
 
 export default function LoginPage() {
   const navigate = useNavigate();
