@@ -105,7 +105,8 @@ function logEmailDiagnostics(err, context = 'Send Mail') {
 }
 
 async function sendViaResend(apiKey, mailOptions) {
-  const from = sanitize(process.env.RESEND_FROM) || sanitize(process.env.SMTP_FROM) || 'SplitUp <onboarding@resend.dev>';
+  // Resend requires verified custom domains OR the default 'onboarding@resend.dev' for sandbox delivery
+  const from = sanitize(process.env.RESEND_FROM) || 'SplitUp <onboarding@resend.dev>';
   const response = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: {
@@ -123,13 +124,15 @@ async function sendViaResend(apiKey, mailOptions) {
 
   const data = await response.json();
   if (!response.ok) {
-    throw new Error(data?.message || `Resend API Error (${response.status}): ${JSON.stringify(data)}`);
+    const errMsg = data?.message || `Resend API Error (${response.status}): ${JSON.stringify(data)}`;
+    console.error(`[Resend Error] Status ${response.status}:`, data);
+    throw new Error(errMsg);
   }
   return { messageId: data.id, provider: 'resend-https' };
 }
 
 async function sendViaBrevo(apiKey, mailOptions) {
-  const fromEmail = sanitize(process.env.SMTP_USER) || 'noreply@splitup.app';
+  const fromEmail = sanitize(process.env.BREVO_FROM) || sanitize(process.env.SMTP_USER) || 'noreply@splitup.app';
   const response = await fetch('https://api.brevo.com/v3/smtp/email', {
     method: 'POST',
     headers: {
@@ -159,6 +162,8 @@ async function sendMailWithAutoFallback(mailOptions, context = 'Email') {
     return await transporter.sendMail(mailOptions);
   }
 
+  let resendFailure = null;
+
   // 1. High-Reliability HTTPS API: Resend (Port 443 — NEVER blocked on Render/Railway)
   const resendKey = sanitize(process.env.RESEND_API_KEY);
   if (resendKey) {
@@ -167,6 +172,7 @@ async function sendMailWithAutoFallback(mailOptions, context = 'Email') {
       console.log(`[Email Service] Dispatched via Resend HTTPS to ${mailOptions.to}. ID: ${result.messageId}`);
       return result;
     } catch (resendErr) {
+      resendFailure = resendErr.message;
       console.error(`[Email Service] Resend HTTPS dispatch failed:`, resendErr.message);
     }
   }
@@ -199,10 +205,14 @@ async function sendMailWithAutoFallback(mailOptions, context = 'Email') {
       return result;
     } catch (fallbackErr) {
       logEmailDiagnostics(fallbackErr, `${context} (Fallback SMTP Port Attempt)`);
+      if (resendFailure) {
+        throw new Error(`Resend Error: ${resendFailure} | SMTP Error: ${fallbackErr.message}`);
+      }
       throw fallbackErr;
     }
   }
 }
+
 
 /**
  * Send a 6-digit OTP email for email verification during registration.
