@@ -6,7 +6,6 @@ export default function TransactionConcernModal({ groupId, expense, currentUserI
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
-
   // New Concern Form State
   const [reason, setReason] = useState('');
   const [submittingConcern, setSubmittingConcern] = useState(false);

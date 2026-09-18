@@ -5,6 +5,80 @@ const prisma = require('../lib/prisma');
 const clerkSecretKey = process.env.CLERK_SECRET_KEY;
 const clerkClient = clerkSecretKey ? createClerkClient({ secretKey: clerkSecretKey }) : null;
 
+async function resolveClerkUser(clerkUserId, clientName, clientEmail, clerkUserFromApi, decodedClaims) {
+  const bestName = clientName ||
+    [clerkUserFromApi?.firstName, clerkUserFromApi?.lastName].filter(Boolean).join(' ') ||
+    clerkUserFromApi?.username ||
+    decodedClaims?.name ||
+    decodedClaims?.first_name ||
+    'User';
+
+  const bestEmail = clientEmail ||
+    clerkUserFromApi?.emailAddresses?.[0]?.emailAddress ||
+    decodedClaims?.email ||
+    decodedClaims?.primary_email_address ||
+    `${clerkUserId}@clerk.user`;
+
+  // 1. Check by Clerk User ID
+  let user = await prisma.user.findUnique({
+    where: { id: clerkUserId },
+  });
+
+  if (user) {
+    if ((user.name === 'Clerk User' || user.name === 'User' || !user.name) && bestName && bestName !== 'Clerk User' && bestName !== 'User') {
+      try {
+        user = await prisma.user.update({
+          where: { id: user.id },
+          data: { name: bestName },
+        });
+      } catch {}
+    }
+    return user;
+  }
+
+  // 2. Check by Email (in case account was created before via standard auth)
+  if (bestEmail && !bestEmail.endsWith('@clerk.user')) {
+    const existingByEmail = await prisma.user.findUnique({
+      where: { email: bestEmail },
+    });
+
+    if (existingByEmail) {
+      try {
+        user = await prisma.user.update({
+          where: { id: existingByEmail.id },
+          data: {
+            name: (existingByEmail.name === 'Clerk User' || !existingByEmail.name) ? bestName : existingByEmail.name,
+            emailVerified: true,
+          },
+        });
+        return user;
+      } catch {
+        return existingByEmail;
+      }
+    }
+  }
+
+  // 3. Create fresh user
+  try {
+    user = await prisma.user.create({
+      data: {
+        id: clerkUserId,
+        name: bestName,
+        email: bestEmail,
+        passwordHash: '',
+        emailVerified: true,
+      },
+    });
+    return user;
+  } catch (createErr) {
+    const fallback = await prisma.user.findFirst({
+      where: { OR: [{ id: clerkUserId }, { email: bestEmail }] },
+    });
+    if (fallback) return fallback;
+    throw createErr;
+  }
+}
+
 async function auth(req, res, next) {
   const authHeader = req.headers.authorization;
 
@@ -13,6 +87,8 @@ async function auth(req, res, next) {
   }
 
   const token = authHeader.slice(7);
+  const clientName = req.headers['x-clerk-user-name'] ? decodeURIComponent(req.headers['x-clerk-user-name']) : null;
+  const clientEmail = req.headers['x-clerk-user-email'] ? decodeURIComponent(req.headers['x-clerk-user-email']) : null;
 
   // 1. Try Clerk Token verification if Clerk is configured
   if (clerkClient) {
@@ -20,40 +96,17 @@ async function auth(req, res, next) {
       const verified = await clerkClient.verifyToken(token);
       if (verified && verified.sub) {
         const clerkUserId = verified.sub;
-        
-        // Find or auto-sync user to Prisma DB
-        let user = await prisma.user.findUnique({
-          where: { id: clerkUserId },
-        });
+        let clerkUser = null;
+        try {
+          clerkUser = await clerkClient.users.getUser(clerkUserId);
+        } catch {}
 
-        if (!user) {
-          // Fetch user details from Clerk API
-          let clerkUser = null;
-          try {
-            clerkUser = await clerkClient.users.getUser(clerkUserId);
-          } catch {}
-
-          const email = clerkUser?.emailAddresses?.[0]?.emailAddress || `${clerkUserId}@clerk.user`;
-          const name = [clerkUser?.firstName, clerkUser?.lastName].filter(Boolean).join(' ') || clerkUser?.username || 'Clerk User';
-
-          user = await prisma.user.upsert({
-            where: { email },
-            update: { id: clerkUserId, name },
-            create: {
-              id: clerkUserId,
-              name,
-              email,
-              passwordHash: '',
-              emailVerified: true,
-            },
-          });
-        }
-
+        const user = await resolveClerkUser(clerkUserId, clientName, clientEmail, clerkUser, verified);
         req.userId = user.id;
         return next();
       }
     } catch (clerkErr) {
-      // If not a verified Clerk token via API, check token claims fallback
+      // Fall through to decoded token check
     }
   }
 
@@ -62,36 +115,15 @@ async function auth(req, res, next) {
   if (decodedToken && decodedToken.sub && (decodedToken.sub.startsWith('user_') || (decodedToken.iss && String(decodedToken.iss).includes('clerk')))) {
     try {
       const clerkUserId = decodedToken.sub;
-      let user = await prisma.user.findUnique({
-        where: { id: clerkUserId },
-      });
-
-      if (!user) {
-        const email = decodedToken.email || decodedToken.primary_email_address || `${clerkUserId}@clerk.user`;
-        const name = decodedToken.name || decodedToken.first_name || 'Clerk User';
-
-        user = await prisma.user.upsert({
-          where: { email },
-          update: { id: clerkUserId, name },
-          create: {
-            id: clerkUserId,
-            name,
-            email,
-            passwordHash: '',
-            emailVerified: true,
-          },
-        });
-      }
-
+      const user = await resolveClerkUser(clerkUserId, clientName, clientEmail, null, decodedToken);
       req.userId = user.id;
       return next();
     } catch (decodeSyncErr) {
-      // Proceed to standard JWT verification
+      console.error('[Auth Middleware] Clerk user resolve error:', decodeSyncErr.message);
     }
   }
 
   // 2. Custom JWT verification
-
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
@@ -112,3 +144,5 @@ async function auth(req, res, next) {
 }
 
 module.exports = auth;
+
+

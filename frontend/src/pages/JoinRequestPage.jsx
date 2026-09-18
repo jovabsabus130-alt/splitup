@@ -1,14 +1,28 @@
 import { useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import api from '../lib/api';
+
+const isClerkConfigured = Boolean(
+  import.meta.env.VITE_CLERK_PUBLISHABLE_KEY ||
+  import.meta.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+);
 
 export default function JoinRequestPage() {
   const { groupId: rawGroupId } = useParams();
   const groupId = (rawGroupId || '').trim();
+  const location = useLocation();
+  const navigate = useNavigate();
 
   const [groupName, setGroupName] = useState('');
+  const [memberCount, setMemberCount] = useState(0);
   const [status, setStatus] = useState('idle'); // idle | loading | success | error | already_member
   const [errorMsg, setErrorMsg] = useState('');
+
+  const isLoggedIn = Boolean(
+    localStorage.getItem('splitup_token') ||
+    localStorage.getItem('token') ||
+    (isClerkConfigured && window.Clerk?.session)
+  );
 
   useEffect(() => {
     if (!groupId || groupId === 'undefined') {
@@ -21,6 +35,7 @@ export default function JoinRequestPage() {
       try {
         const { data } = await api.get(`/api/groups/${groupId}/preview`);
         setGroupName(data.group.name);
+        if (data.group.memberCount) setMemberCount(data.group.memberCount);
         if (data.isMember) {
           setStatus('already_member');
         } else if (data.requestStatus === 'pending') {
@@ -43,6 +58,12 @@ export default function JoinRequestPage() {
 
   async function handleRequest() {
     if (!groupId || groupId === 'undefined') return;
+
+    if (!isLoggedIn) {
+      navigate('/login', { state: { from: location } });
+      return;
+    }
+
     setStatus('loading');
     setErrorMsg('');
     try {
@@ -78,8 +99,12 @@ export default function JoinRequestPage() {
             </>
           ) : (
             <>
-              <h1>Join Group</h1>
-              {groupName && <p style={{ color: 'var(--text-primary)', fontWeight: 600, fontSize: '15px', marginTop: '4px' }}>{groupName}</p>}
+              <h1>Join {groupName || 'Group'}</h1>
+              {groupName && (
+                <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginTop: '4px' }}>
+                  {memberCount > 0 ? `${memberCount} active member${memberCount === 1 ? '' : 's'}` : 'Shared Expense Group'}
+                </p>
+              )}
             </>
           )}
         </div>
@@ -105,7 +130,7 @@ export default function JoinRequestPage() {
         ) : (
           <div style={{ display: 'grid', gap: 'var(--space-4)' }}>
             <p style={{ fontSize: '13.5px', color: 'var(--text-secondary)', textAlign: 'center', lineHeight: 1.5 }}>
-              You've been invited to join this shared expense group. Request access below to start tracking and splitting expenses.
+              You've been invited to join <strong>{groupName || 'this group'}</strong>. Request access below to start tracking and splitting expenses.
             </p>
 
             {errorMsg && (
@@ -119,7 +144,7 @@ export default function JoinRequestPage() {
               disabled={status === 'loading' || (status === 'error' && errorMsg.includes('invalid'))}
               style={{ width: '100%' }}
             >
-              {status === 'loading' ? 'Sending request…' : 'Request to Join'}
+              {status === 'loading' ? 'Sending request…' : isLoggedIn ? 'Request to Join' : 'Sign in to Join Group'}
             </button>
 
             <Link to="/dashboard" className="btn-secondary" style={{ width: '100%' }}>
@@ -127,9 +152,8 @@ export default function JoinRequestPage() {
             </Link>
           </div>
         )}
-
-        
       </div>
     </div>
   );
 }
+

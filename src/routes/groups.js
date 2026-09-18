@@ -25,7 +25,71 @@ const approveRequestSchema = z.object({
   status: z.enum(['approved', 'denied']),
 });
 
+// Optional auth middleware for public preview endpoint
+async function optionalAuth(req, res, next) {
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    return auth(req, res, () => next());
+  }
+  next();
+}
+
+// ── Preview group info for invite link (Public with Optional Auth) ───────────
+router.get('/:groupId/preview', optionalAuth, async (req, res, next) => {
+  try {
+    const rawGroupId = req.params.groupId || '';
+    const groupId = rawGroupId.trim();
+
+    if (!groupId) {
+      return res.status(400).json({ success: false, message: 'Invalid group identifier' });
+    }
+
+    const group = await prisma.group.findUnique({
+      where: { id: groupId },
+      select: {
+        id: true,
+        name: true,
+        isDeleted: true,
+        members: {
+          select: { userId: true },
+        },
+        ...(req.userId
+          ? {
+              joinRequests: {
+                where: { userId: req.userId },
+                select: { status: true },
+              },
+            }
+          : {}),
+      },
+    });
+
+    if (!group) {
+      return res.status(404).json({ success: false, message: 'This invite link is invalid or the group no longer exists.' });
+    }
+
+    const isMember = req.userId ? group.members.some((m) => m.userId === req.userId) : false;
+    const existingRequest = group.joinRequests?.[0]?.status || null;
+
+    return res.status(200).json({
+      success: true,
+      group: {
+        id: group.id,
+        name: group.name,
+        isDeleted: Boolean(group.isDeleted),
+        memberCount: group.members.length,
+      },
+      isMember,
+      requestStatus: existingRequest,
+    });
+  } catch (error) {
+    console.error('Group preview error:', error);
+    next(error);
+  }
+});
+
 router.use(auth);
+
 
 // ── Create group ────────────────────────────────────────────────────────────
 // Concept: Server-side error handling (try/catch + error middleware)
@@ -222,50 +286,6 @@ router.post('/:groupId/join-request', async (req, res, next) => {
   }
 });
 
-// ── Preview group info for invite link ──────────────────────────────────────
-router.get('/:groupId/preview', async (req, res, next) => {
-  try {
-    const rawGroupId = req.params.groupId || '';
-    const groupId = rawGroupId.trim();
-
-    const group = await prisma.group.findUnique({
-      where: { id: groupId },
-      select: {
-        id: true,
-        name: true,
-        isDeleted: true,
-        members: {
-          select: { userId: true },
-        },
-        joinRequests: {
-          where: { userId: req.userId },
-          select: { status: true },
-        },
-      },
-    });
-
-    if (!group) {
-      return res.status(404).json({ success: false, message: 'This invite link is invalid or the group no longer exists.' });
-    }
-
-    const isMember = group.members.some((m) => m.userId === req.userId);
-    const existingRequest = group.joinRequests?.[0]?.status || null;
-
-    return res.status(200).json({
-      success: true,
-      group: {
-        id: group.id,
-        name: group.name,
-        isDeleted: Boolean(group.isDeleted),
-      },
-      isMember,
-      requestStatus: existingRequest,
-    });
-  } catch (error) {
-    console.error('Group preview error:', error);
-    next(error);
-  }
-});
 
 // ── List pending join requests (admin only) ──────────────────────────────────
 router.get('/:groupId/join-requests', async (req, res, next) => {

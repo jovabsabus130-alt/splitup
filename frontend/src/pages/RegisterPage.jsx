@@ -76,8 +76,8 @@ export default function RegisterPage() {
             <SignUp
               routing="hash"
               signInUrl="/login"
-              fallbackRedirectUrl="/dashboard"
-              forceRedirectUrl="/dashboard"
+              fallbackRedirectUrl={redirectPath}
+              forceRedirectUrl={redirectPath}
             />
           </div>
         ) : (

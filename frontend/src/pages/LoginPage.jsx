@@ -127,8 +127,8 @@ export default function LoginPage() {
             <SignIn
               routing="hash"
               signUpUrl="/register"
-              fallbackRedirectUrl="/dashboard"
-              forceRedirectUrl="/dashboard"
+              fallbackRedirectUrl={redirectPath}
+              forceRedirectUrl={redirectPath}
             />
           </div>
         ) : (

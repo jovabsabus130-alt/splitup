@@ -107,11 +107,7 @@ export default function App() {
           />
           <Route
             path="/join/:groupId"
-            element={
-              <ProtectedRoute>
-                <JoinRequestPage />
-              </ProtectedRoute>
-            }
+            element={<JoinRequestPage />}
           />
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>

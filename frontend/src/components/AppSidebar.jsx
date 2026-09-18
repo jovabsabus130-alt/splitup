@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import api from '../lib/api';
+import EditProfileModal from './EditProfileModal';
 
 export default function AppSidebar({
   mobileOpen,
@@ -16,6 +17,7 @@ export default function AppSidebar({
 
   const [groups, setGroups] = useState([]);
   const [currentUser, setCurrentUser] = useState(null);
+  const [showProfileModal, setShowProfileModal] = useState(false);
   
   // UI & Network State Handlers
   const [loading, setLoading] = useState(true);
@@ -26,15 +28,46 @@ export default function AppSidebar({
   const [createError, setCreateError] = useState(null); // Modal-level error banner
 
   useEffect(() => {
-    const userStr = localStorage.getItem('splitup_user');
-    if (userStr) {
-      try {
-        setCurrentUser(JSON.parse(userStr));
-      } catch {
-        // Corrupted localStorage token fallback
-        setCurrentUser(null);
+    function syncUser() {
+      const userStr = localStorage.getItem('splitup_user');
+      if (userStr) {
+        try {
+          setCurrentUser(JSON.parse(userStr));
+        } catch {
+          setCurrentUser(null);
+        }
+      } else if (window.Clerk?.user) {
+        const cu = window.Clerk.user;
+        const customName = localStorage.getItem('splitup_custom_name');
+        const name = customName || cu.fullName || [cu.firstName, cu.lastName].filter(Boolean).join(' ') || cu.username || cu.firstName || 'User';
+        const email = cu.primaryEmailAddress?.emailAddress || cu.emailAddresses?.[0]?.emailAddress || '';
+        setCurrentUser({ id: cu.id, name, email });
       }
     }
+
+    syncUser();
+
+    api.get('/api/auth/me')
+      .then((res) => {
+        if (res.data?.user) {
+          setCurrentUser(res.data.user);
+          localStorage.setItem('splitup_user', JSON.stringify(res.data.user));
+        }
+      })
+      .catch(() => {});
+
+    function handleUserUpdate(e) {
+      if (e.detail) {
+        setCurrentUser(e.detail);
+      } else {
+        syncUser();
+      }
+    }
+
+    window.addEventListener('splitup-user-updated', handleUserUpdate);
+    return () => {
+      window.removeEventListener('splitup-user-updated', handleUserUpdate);
+    };
   }, []);
 
   /**
@@ -305,12 +338,22 @@ export default function AppSidebar({
 
         {/* ── User Profile (Pinned to Bottom) ─────────────────── */}
         <div className="sidebar-footer">
-          <div className="sidebar-user-info">
+          <div
+            className="sidebar-user-info"
+            onClick={() => setShowProfileModal(true)}
+            style={{ cursor: 'pointer', flex: 1, minWidth: 0 }}
+            title="Click to rename or edit profile"
+          >
             <div className="sidebar-user-avatar">
               {currentUser?.name?.charAt(0).toUpperCase() || 'U'}
             </div>
-            <div className="sidebar-user-details">
-              <span className="sidebar-user-name">{currentUser?.name || 'User'}</span>
+            <div className="sidebar-user-details" style={{ minWidth: 0, flex: 1 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                <span className="sidebar-user-name" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {currentUser?.name || 'User'}
+                </span>
+                <span style={{ fontSize: '0.75rem', opacity: 0.6 }} title="Edit display name">✏️</span>
+              </div>
               <span className="sidebar-user-email">{currentUser?.email || ''}</span>
             </div>
           </div>
@@ -432,6 +475,14 @@ export default function AppSidebar({
           </div>
         </div>
       )}
+
+      {/* ── Edit Profile Modal ─────────────────────────────────── */}
+      <EditProfileModal
+        isOpen={showProfileModal}
+        onClose={() => setShowProfileModal(false)}
+        currentUser={currentUser}
+        onUpdated={(updated) => setCurrentUser(updated)}
+      />
     </>
   );
 }

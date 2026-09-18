@@ -5,6 +5,7 @@ const jwt = require('jsonwebtoken');
 const { z } = require('zod');
 
 const prisma = require('../lib/prisma');
+const auth = require('../middleware/auth');
 const { sanitizeMiddleware } = require('../middleware/sanitize');
 const { sendOtpEmail, sendPasswordResetOtpEmail, testSmtpConnection } = require('../services/emailService');
 
@@ -568,6 +569,78 @@ router.post('/login', async (req, res, next) => {
     return res.status(200).json({ success: true, user: userPublic(user), token });
   } catch (error) {
     console.error('Login error:', error);
+    next(error);
+  }
+});
+
+// ── GET /me (Fetch current authenticated user profile) ───────────────────────
+router.get('/me', auth, async (req, res, next) => {
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: req.userId },
+    });
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+    return res.status(200).json({ success: true, user: userPublic(user) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ── PUT /profile (Rename / update current user profile) ──────────────────────
+const updateProfileSchema = z.object({
+  name: z.string().trim().min(1, 'Name cannot be empty').max(100, 'Name cannot exceed 100 characters'),
+  phone: z.string().trim().optional().nullable(),
+  upiId: z.string().trim().optional().nullable(),
+});
+
+router.put('/profile', auth, async (req, res, next) => {
+  try {
+    const parsed = updateProfileSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid profile data',
+        errors: parsed.error.issues.map((i) => ({ path: i.path.join('.'), message: i.message })),
+      });
+    }
+
+    const { name, phone, upiId } = parsed.data;
+    const dataToUpdate = { name };
+    if (phone !== undefined) dataToUpdate.phone = phone || null;
+    if (upiId !== undefined) dataToUpdate.upiId = upiId || null;
+
+    const updatedUser = await prisma.user.update({
+      where: { id: req.userId },
+      data: dataToUpdate,
+    });
+
+    // Optionally sync with Clerk if backend key is present and user is a Clerk user
+    const clerkSecretKey = process.env.CLERK_SECRET_KEY;
+    if (clerkSecretKey && req.userId.startsWith('user_')) {
+      try {
+        const { createClerkClient } = require('@clerk/backend');
+        const clerk = createClerkClient({ secretKey: clerkSecretKey });
+        const nameParts = name.trim().split(/\s+/);
+        const firstName = nameParts[0] || name;
+        const lastName = nameParts.slice(1).join(' ') || undefined;
+        await clerk.users.updateUser(req.userId, {
+          firstName,
+          ...(lastName !== undefined ? { lastName } : {}),
+        });
+      } catch (clerkSyncErr) {
+        console.warn('[Profile] Clerk user update note:', clerkSyncErr.message);
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Profile updated successfully',
+      user: userPublic(updatedUser),
+    });
+  } catch (error) {
+    console.error('Update profile error:', error);
     next(error);
   }
 });
