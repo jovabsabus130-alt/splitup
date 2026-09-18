@@ -42,18 +42,27 @@ export default function LoginPage() {
     }
   }
 
+  const [forgotNotRegistered, setForgotNotRegistered] = useState(false);
+
   async function handleRequestReset(e) {
     e.preventDefault();
     if (!forgotEmail) return;
     setForgotError('');
     setForgotMsg('');
+    setForgotNotRegistered(false);
     setForgotLoading(true);
     try {
       const { data } = await api.post('/api/auth/forgot-password', { email: forgotEmail.trim() });
       setForgotMsg(data.message || 'Verification code sent to your email.');
       setForgotStep(2);
     } catch (err) {
-      setForgotError(err.response?.data?.message || 'Failed to send reset code');
+      const isNotReg = err.response?.status === 404 || err.response?.data?.notRegistered;
+      if (isNotReg) {
+        setForgotNotRegistered(true);
+        setForgotError('No account found with this email. Please create an account first.');
+      } else {
+        setForgotError(err.response?.data?.message || 'Failed to send reset code');
+      }
     } finally {
       setForgotLoading(false);
     }
@@ -180,9 +189,23 @@ export default function LoginPage() {
                   <button type="button" className="btn-secondary" onClick={() => setShowForgotModal(false)} style={{ flex: 1 }}>
                     Cancel
                   </button>
-                  <button type="submit" className="btn-primary" disabled={forgotLoading} style={{ flex: 1 }}>
-                    {forgotLoading ? 'Sending…' : 'Send Code'}
-                  </button>
+                  {forgotNotRegistered ? (
+                    <button
+                      type="button"
+                      className="btn-primary"
+                      onClick={() => {
+                        setShowForgotModal(false);
+                        navigate('/register', { state: { email: forgotEmail.trim() } });
+                      }}
+                      style={{ flex: 1, background: 'linear-gradient(135deg, #10b981, #059669)' }}
+                    >
+                      Register Now →
+                    </button>
+                  ) : (
+                    <button type="submit" className="btn-primary" disabled={forgotLoading} style={{ flex: 1 }}>
+                      {forgotLoading ? 'Sending…' : 'Send Code'}
+                    </button>
+                  )}
                 </div>
               </form>
             ) : (

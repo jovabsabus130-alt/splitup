@@ -2,11 +2,7 @@ const nodemailer = require('nodemailer');
 
 let transporter = null;
 
-function getTransporter() {
-  if (transporter) {
-    return transporter;
-  }
-
+function createTransporterInstance() {
   const user = process.env.SMTP_USER;
   const pass = process.env.SMTP_PASS ? process.env.SMTP_PASS.replace(/\s+/g, '') : '';
 
@@ -15,25 +11,38 @@ function getTransporter() {
   }
 
   if (process.env.SMTP_HOST) {
-    transporter = nodemailer.createTransport({
+    return nodemailer.createTransport({
       host: process.env.SMTP_HOST,
       port: Number(process.env.SMTP_PORT) || 587,
-      secure: process.env.SMTP_SECURE === 'true',
+      secure: process.env.SMTP_SECURE === 'true' || Number(process.env.SMTP_PORT) === 465,
       auth: { user, pass },
-      connectionTimeout: 10000,
-      greetingTimeout: 10000,
-      socketTimeout: 15000,
-    });
-  } else {
-    transporter = nodemailer.createTransport({
-      service: 'gmail',
-      auth: { user, pass },
-      connectionTimeout: 10000,
-      greetingTimeout: 10000,
-      socketTimeout: 15000,
+      tls: {
+        rejectUnauthorized: false,
+      },
+      connectionTimeout: 15000,
+      greetingTimeout: 15000,
+      socketTimeout: 20000,
     });
   }
 
+  // Direct Gmail SMTP transport with fallback
+  return nodemailer.createTransport({
+    service: 'gmail',
+    auth: { user, pass },
+    tls: {
+      rejectUnauthorized: false,
+    },
+    connectionTimeout: 15000,
+    greetingTimeout: 15000,
+    socketTimeout: 20000,
+  });
+}
+
+function getTransporter() {
+  if (transporter) {
+    return transporter;
+  }
+  transporter = createTransporterInstance();
   return transporter;
 }
 
@@ -48,13 +57,19 @@ function setTransporter(customTransporter) {
  * @param {string} otp  - 6-digit OTP code
  */
 async function sendOtpEmail(to, name, otp) {
-  const t = getTransporter();
-
-  return await t.sendMail({
-    from: `"SplitUp" <${process.env.SMTP_FROM || process.env.SMTP_USER || 'noreply@splitup.app'}>`,
+  const fromAddress = process.env.SMTP_FROM || process.env.SMTP_USER || 'noreply@splitup.app';
+  const mailOptions = {
+    from: `"SplitUp" <${fromAddress}>`,
     to,
-    subject: 'Your SplitUp Verification Code',
-    text: `Hi ${name || 'there'},\n\nYour verification code is: ${otp}\n\nThis code expires in 10 minutes.\n\nIf you didn't create a SplitUp account, ignore this email.\n\n— The SplitUp Team`,
+    replyTo: fromAddress,
+    subject: `Your SplitUp Verification Code: ${otp}`,
+    priority: 'high',
+    headers: {
+      'X-Priority': '1 (Highest)',
+      'X-MSMail-Priority': 'High',
+      Importance: 'High',
+    },
+    text: `Hi ${name || 'there'},\n\nYour SplitUp email verification code is: ${otp}\n\nThis code will expire in 10 minutes.\n\nIf you did not initiate this registration request, please disregard this email.\n\n— The SplitUp Team`,
     html: `
       <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 480px; margin: 0 auto; padding: 32px 24px; background: #0f172a; border-radius: 16px; color: #f8fafc; border: 1px solid #1e293b;">
         <div style="text-align: center; margin-bottom: 24px;">
@@ -69,7 +84,17 @@ async function sendOtpEmail(to, name, otp) {
         <p style="margin: 0; color: #475569; font-size: 12px; text-align: center;">If you didn't request this code, you can safely ignore this email.</p>
       </div>
     `,
-  });
+  };
+
+  try {
+    const t = getTransporter();
+    return await t.sendMail(mailOptions);
+  } catch (err) {
+    console.warn('[Email Service] Initial OTP send failed, refreshing transporter and retrying:', err.message);
+    transporter = null;
+    const freshTransporter = getTransporter();
+    return await freshTransporter.sendMail(mailOptions);
+  }
 }
 
 /**
@@ -79,13 +104,19 @@ async function sendOtpEmail(to, name, otp) {
  * @param {string} otp  - 6-digit OTP code
  */
 async function sendPasswordResetOtpEmail(to, name, otp) {
-  const t = getTransporter();
-
-  return await t.sendMail({
-    from: `"SplitUp Security" <${process.env.SMTP_FROM || process.env.SMTP_USER || 'noreply@splitup.app'}>`,
+  const fromAddress = process.env.SMTP_FROM || process.env.SMTP_USER || 'noreply@splitup.app';
+  const mailOptions = {
+    from: `"SplitUp Security" <${fromAddress}>`,
     to,
-    subject: 'SplitUp Password Reset Code',
-    text: `Hi ${name || 'there'},\n\nYour password reset code is: ${otp}\n\nThis code expires in 10 minutes.\n\nIf you did not request a password reset, please secure your account immediately.\n\n— The SplitUp Team`,
+    replyTo: fromAddress,
+    subject: `SplitUp Password Reset Code: ${otp}`,
+    priority: 'high',
+    headers: {
+      'X-Priority': '1 (Highest)',
+      'X-MSMail-Priority': 'High',
+      Importance: 'High',
+    },
+    text: `Hi ${name || 'there'},\n\nYour SplitUp password reset code is: ${otp}\n\nThis code will expire in 10 minutes.\n\nIf you did not request a password reset, please secure your account immediately.\n\n— The SplitUp Team`,
     html: `
       <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 480px; margin: 0 auto; padding: 32px 24px; background: #0f172a; border-radius: 16px; color: #f8fafc; border: 1px solid #1e293b;">
         <div style="text-align: center; margin-bottom: 24px;">
@@ -100,7 +131,17 @@ async function sendPasswordResetOtpEmail(to, name, otp) {
         <p style="margin: 0; color: #475569; font-size: 12px; text-align: center;">If you didn't request a password reset, you can safely ignore this email.</p>
       </div>
     `,
-  });
+  };
+
+  try {
+    const t = getTransporter();
+    return await t.sendMail(mailOptions);
+  } catch (err) {
+    console.warn('[Email Service] Initial Password Reset send failed, refreshing transporter and retrying:', err.message);
+    transporter = null;
+    const freshTransporter = getTransporter();
+    return await freshTransporter.sendMail(mailOptions);
+  }
 }
 
 module.exports = { getTransporter, setTransporter, sendOtpEmail, sendPasswordResetOtpEmail };

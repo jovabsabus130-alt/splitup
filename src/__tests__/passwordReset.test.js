@@ -221,7 +221,7 @@ describe('Forgot Password & Password Reset Lifecycle Tests', () => {
       assert.strictEqual(res.data.success, true);
       assert.strictEqual(
         res.data.message,
-        'If an account exists with that email, a password reset code has been sent.'
+        'A password reset code has been sent to your email.'
       );
       // Security: never return reset token in response
       assert.strictEqual(res.data.otp, undefined);
@@ -234,17 +234,18 @@ describe('Forgot Password & Password Reset Lifecycle Tests', () => {
       assert.ok(new Date(otpCodesTable[0].expiresAt) > new Date());
     });
 
-    it('should return identical generic success for a non-existing email without creating OTP', async () => {
+    it('should return 404 with notRegistered flag for a non-existing email without creating OTP', async () => {
       const req = createMockReq({ email: 'ghost@example.com' });
       const res = createMockRes();
 
       await callRouter(authRouter, 'POST', '/forgot-password', req, res);
 
-      assert.strictEqual(res.statusCode, 200);
-      assert.strictEqual(res.data.success, true);
+      assert.strictEqual(res.statusCode, 404);
+      assert.strictEqual(res.data.success, false);
+      assert.strictEqual(res.data.notRegistered, true);
       assert.strictEqual(
         res.data.message,
-        'If an account exists with that email, a password reset code has been sent.'
+        'No account found with this email address. Please create an account first.'
       );
       assert.strictEqual(otpCodesTable.length, 0);
     });

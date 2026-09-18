@@ -413,17 +413,18 @@ describe('Email Verification & OTP Lifecycle Tests', () => {
   });
 
   describe('4. Anti-Enumeration & Security Safeguards', () => {
-    it('should not reveal whether an email exists when requesting resend-verification', async () => {
+    it('should return 404 with notRegistered flag when requesting resend-verification for non-existent email', async () => {
       const req = createMockReq({ email: 'nonexistent@example.com' });
       const res = createMockRes();
 
       await callRouter(authRouter, 'POST', '/resend-verification', req, res);
 
-      assert.strictEqual(res.statusCode, 200);
-      assert.strictEqual(res.data.success, true);
+      assert.strictEqual(res.statusCode, 404);
+      assert.strictEqual(res.data.success, false);
+      assert.strictEqual(res.data.notRegistered, true);
       assert.strictEqual(
         res.data.message,
-        'If an account exists with that email, a verification code has been sent.'
+        'No account found with this email address. Please create an account first.'
       );
     });
 

@@ -57,6 +57,7 @@ const verifyEmailSchema = z.object({
 
 const resendVerificationSchema = z.object({
   email: z.string().trim().email('Invalid email address'),
+  oldEmail: z.string().trim().email('Invalid email address').optional(),
 });
 
 const forgotPasswordSchema = z.object({
@@ -174,6 +175,38 @@ async function handleVerifyEmail(req, res, next) {
   }
 }
 
+async function sendVerificationEmailSafely(email, name, code) {
+  if (process.env.SMTP_USER && process.env.SMTP_PASS) {
+    try {
+      const result = await sendOtpEmail(email, name, code);
+      console.log(`[OTP] Verification email dispatched to ${email}. MessageId: ${result?.messageId || 'ok'}`);
+      return true;
+    } catch (mailErr) {
+      console.error(`[OTP Error] Failed to send verification email to ${email}:`, mailErr.message);
+      return false;
+    }
+  } else {
+    console.warn(`[OTP] SMTP credentials missing in environment. Verification OTP for ${email}: ${code}`);
+    return false;
+  }
+}
+
+async function sendPasswordResetEmailSafely(email, name, code) {
+  if (process.env.SMTP_USER && process.env.SMTP_PASS) {
+    try {
+      const result = await sendPasswordResetOtpEmail(email, name, code);
+      console.log(`[OTP] Password reset email dispatched to ${email}. MessageId: ${result?.messageId || 'ok'}`);
+      return true;
+    } catch (mailErr) {
+      console.error(`[OTP Error] Failed to send password reset email to ${email}:`, mailErr.message);
+      return false;
+    }
+  } else {
+    console.warn(`[OTP] SMTP credentials missing in environment. Password reset OTP for ${email}: ${code}`);
+    return false;
+  }
+}
+
 async function handleResendVerification(req, res, next) {
   try {
     const parsed = resendVerificationSchema.safeParse(req.body);
@@ -185,13 +218,19 @@ async function handleResendVerification(req, res, next) {
       });
     }
 
-    const { email } = parsed.data;
+    const { email, oldEmail } = parsed.data;
     const normalizedEmail = email.toLowerCase().trim();
+    const normalizedOldEmail = oldEmail ? oldEmail.toLowerCase().trim() : null;
 
-    const genericSuccessResponse = {
-      success: true,
-      message: 'If an account exists with that email, a verification code has been sent.',
-    };
+    // If changing email address during pending registration
+    if (normalizedOldEmail && normalizedOldEmail !== normalizedEmail) {
+      const oldPending = pendingRegistrations.get(normalizedOldEmail);
+      if (oldPending) {
+        pendingRegistrations.delete(normalizedOldEmail);
+        oldPending.email = normalizedEmail;
+        pendingRegistrations.set(normalizedEmail, oldPending);
+      }
+    }
 
     // 1. Check pending registrations
     const pending = pendingRegistrations.get(normalizedEmail);
@@ -202,13 +241,12 @@ async function handleResendVerification(req, res, next) {
 
       console.log(`\n========================================\n🔐 [SPLITUP OTP] Verification Code for ${normalizedEmail}: ${code}\n========================================\n`);
 
-      if (process.env.SMTP_USER && process.env.SMTP_PASS) {
-        sendOtpEmail(normalizedEmail, pending.name, code).catch((mailErr) => {
-          console.error('Failed to send resend verification email:', mailErr.message);
-        });
-      }
+      await sendVerificationEmailSafely(normalizedEmail, pending.name, code);
 
-      return res.status(200).json(genericSuccessResponse);
+      return res.status(200).json({
+        success: true,
+        message: 'A verification code has been sent to your email.',
+      });
     }
 
     // 2. Check existing database user
@@ -217,7 +255,11 @@ async function handleResendVerification(req, res, next) {
     });
 
     if (!user) {
-      return res.status(200).json(genericSuccessResponse);
+      return res.status(404).json({
+        success: false,
+        notRegistered: true,
+        message: 'No account found with this email address. Please create an account first.',
+      });
     }
 
     // Invalidate prior unused OTPs
@@ -241,14 +283,12 @@ async function handleResendVerification(req, res, next) {
 
     console.log(`\n========================================\n🔐 [SPLITUP OTP] Verification Code for ${normalizedEmail}: ${code}\n========================================\n`);
 
-    // Non-blocking email dispatch
-    if (process.env.SMTP_USER && process.env.SMTP_PASS) {
-      sendOtpEmail(normalizedEmail, user.name, code).catch((mailErr) => {
-        console.error('Failed to send resend verification email:', mailErr.message);
-      });
-    }
+    await sendVerificationEmailSafely(normalizedEmail, user.name, code);
 
-    return res.status(200).json(genericSuccessResponse);
+    return res.status(200).json({
+      success: true,
+      message: 'A verification code has been sent to your email.',
+    });
   } catch (error) {
     console.error('Resend verification error:', error);
     next(error);
@@ -297,12 +337,7 @@ router.post('/register', async (req, res, next) => {
 
     console.log(`\n========================================\n🔐 [SPLITUP OTP] Registration Code for ${normalizedEmail}: ${code}\n========================================\n`);
 
-    // Non-blocking email dispatch
-    if (process.env.SMTP_USER && process.env.SMTP_PASS) {
-      sendOtpEmail(normalizedEmail, name, code).catch((mailErr) => {
-        console.error('Failed to send OTP email during register:', mailErr.message);
-      });
-    }
+    await sendVerificationEmailSafely(normalizedEmail, name, code);
 
     return res.status(201).json({
       success: true,
@@ -339,11 +374,6 @@ router.post('/forgot-password', async (req, res, next) => {
     const { email } = parsed.data;
     const normalizedEmail = email.toLowerCase().trim();
 
-    const genericSuccessResponse = {
-      success: true,
-      message: 'If an account exists with that email, a password reset code has been sent.',
-    };
-
     // 1. Check pending registrations store
     const pending = pendingRegistrations.get(normalizedEmail);
     if (pending) {
@@ -353,13 +383,12 @@ router.post('/forgot-password', async (req, res, next) => {
 
       console.log(`\n========================================\n🔐 [SPLITUP OTP] Password Reset Code for ${normalizedEmail}: ${code}\n========================================\n`);
 
-      if (process.env.SMTP_USER && process.env.SMTP_PASS) {
-        sendPasswordResetOtpEmail(normalizedEmail, pending.name, code).catch((mailErr) => {
-          console.error('Failed to send password reset OTP email:', mailErr.message);
-        });
-      }
+      await sendPasswordResetEmailSafely(normalizedEmail, pending.name, code);
 
-      return res.status(200).json(genericSuccessResponse);
+      return res.status(200).json({
+        success: true,
+        message: 'A password reset code has been sent to your email.',
+      });
     }
 
     // 2. Check existing user in database
@@ -367,9 +396,12 @@ router.post('/forgot-password', async (req, res, next) => {
       where: { email: normalizedEmail },
     });
 
-    // Always respond with generic success to prevent user enumeration attacks
     if (!user) {
-      return res.status(200).json(genericSuccessResponse);
+      return res.status(404).json({
+        success: false,
+        notRegistered: true,
+        message: 'No account found with this email address. Please create an account first.',
+      });
     }
 
     // Invalidate existing unused OTPs
@@ -393,14 +425,12 @@ router.post('/forgot-password', async (req, res, next) => {
 
     console.log(`\n========================================\n🔐 [SPLITUP OTP] Password Reset Code for ${normalizedEmail}: ${code}\n========================================\n`);
 
-    // Non-blocking email dispatch
-    if (process.env.SMTP_USER && process.env.SMTP_PASS) {
-      sendPasswordResetOtpEmail(normalizedEmail, user.name, code).catch((mailErr) => {
-        console.error('Failed to send password reset OTP email:', mailErr.message);
-      });
-    }
+    await sendPasswordResetEmailSafely(normalizedEmail, user.name, code);
 
-    return res.status(200).json(genericSuccessResponse);
+    return res.status(200).json({
+      success: true,
+      message: 'A password reset code has been sent to your email.',
+    });
   } catch (error) {
     console.error('Forgot password error:', error);
     next(error);
