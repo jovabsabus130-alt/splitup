@@ -104,20 +104,93 @@ function logEmailDiagnostics(err, context = 'Send Mail') {
   console.error('');
 }
 
+async function sendViaResend(apiKey, mailOptions) {
+  const from = sanitize(process.env.RESEND_FROM) || sanitize(process.env.SMTP_FROM) || 'SplitUp <onboarding@resend.dev>';
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      from,
+      to: [mailOptions.to],
+      subject: mailOptions.subject,
+      html: mailOptions.html,
+      text: mailOptions.text,
+    }),
+  });
+
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data?.message || `Resend API Error (${response.status}): ${JSON.stringify(data)}`);
+  }
+  return { messageId: data.id, provider: 'resend-https' };
+}
+
+async function sendViaBrevo(apiKey, mailOptions) {
+  const fromEmail = sanitize(process.env.SMTP_USER) || 'noreply@splitup.app';
+  const response = await fetch('https://api.brevo.com/v3/smtp/email', {
+    method: 'POST',
+    headers: {
+      'api-key': apiKey,
+      'Content-Type': 'application/json',
+      accept: 'application/json',
+    },
+    body: JSON.stringify({
+      sender: { name: 'SplitUp', email: fromEmail },
+      to: [{ email: mailOptions.to }],
+      subject: mailOptions.subject,
+      htmlContent: mailOptions.html,
+      textContent: mailOptions.text,
+    }),
+  });
+
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data?.message || `Brevo API Error (${response.status}): ${JSON.stringify(data)}`);
+  }
+  return { messageId: data.messageId, provider: 'brevo-https' };
+}
+
 async function sendMailWithAutoFallback(mailOptions, context = 'Email') {
-  // 1. Try with primary transporter (Port 587 STARTTLS)
+  // If custom mock transporter was set (e.g. unit tests), use it directly
+  if (transporter && transporter.sendMail && (transporter !== fallbackTransporter || (!process.env.RESEND_API_KEY && !process.env.BREVO_API_KEY))) {
+    return await transporter.sendMail(mailOptions);
+  }
+
+  // 1. High-Reliability HTTPS API: Resend (Port 443 — NEVER blocked on Render/Railway)
+  const resendKey = sanitize(process.env.RESEND_API_KEY);
+  if (resendKey) {
+    try {
+      const result = await sendViaResend(resendKey, mailOptions);
+      console.log(`[Email Service] Dispatched via Resend HTTPS to ${mailOptions.to}. ID: ${result.messageId}`);
+      return result;
+    } catch (resendErr) {
+      console.error(`[Email Service] Resend HTTPS dispatch failed:`, resendErr.message);
+    }
+  }
+
+  // 2. High-Reliability HTTPS API: Brevo (Port 443 — NEVER blocked on Render/Railway)
+  const brevoKey = sanitize(process.env.BREVO_API_KEY);
+  if (brevoKey) {
+    try {
+      const result = await sendViaBrevo(brevoKey, mailOptions);
+      console.log(`[Email Service] Dispatched via Brevo HTTPS to ${mailOptions.to}. ID: ${result.messageId}`);
+      return result;
+    } catch (brevoErr) {
+      console.error(`[Email Service] Brevo HTTPS dispatch failed:`, brevoErr.message);
+    }
+  }
+
+  // 3. Standard SMTP (Port 587 STARTTLS)
   try {
     const primary = getTransporter();
     return await primary.sendMail(mailOptions);
   } catch (primaryErr) {
-    logEmailDiagnostics(primaryErr, `${context} (Primary Port Attempt)`);
+    logEmailDiagnostics(primaryErr, `${context} (Primary SMTP Port Attempt)`);
 
-    // If transporter was custom mocked (e.g. tests), don't fallback to real SMTP
-    if (transporter && transporter !== fallbackTransporter) {
-      throw primaryErr;
-    }
-
-    // 2. Try with fallback transporter (Port 465 SSL)
+    // 4. Fallback SMTP (Port 465 SSL)
     console.warn(`[Email Service] Attempting fallback transporter for ${mailOptions.to}...`);
     try {
       const fallback = getFallbackTransporter();
@@ -125,7 +198,7 @@ async function sendMailWithAutoFallback(mailOptions, context = 'Email') {
       console.log(`[Email Service] Fallback delivery successful to ${mailOptions.to}. MessageId: ${result?.messageId || 'ok'}`);
       return result;
     } catch (fallbackErr) {
-      logEmailDiagnostics(fallbackErr, `${context} (Fallback Port Attempt)`);
+      logEmailDiagnostics(fallbackErr, `${context} (Fallback SMTP Port Attempt)`);
       throw fallbackErr;
     }
   }
@@ -210,27 +283,32 @@ async function sendPasswordResetOtpEmail(to, name, otp) {
 }
 
 /**
- * Diagnostic helper to verify SMTP delivery in production
+ * Diagnostic helper to verify SMTP/HTTPS delivery in production
  * @param {string} testRecipient - Optional recipient email address
  */
 async function testSmtpConnection(testRecipient) {
   const { user, pass } = getCredentials();
+  const resendKey = sanitize(process.env.RESEND_API_KEY);
+  const brevoKey = sanitize(process.env.BREVO_API_KEY);
   const host = sanitize(process.env.SMTP_HOST) || 'smtp.gmail.com';
   const port = Number(process.env.SMTP_PORT) || 587;
-  const to = testRecipient || user;
+  const to = testRecipient || user || 'jovabworks@gmail.com';
 
   const diagnostics = {
+    provider: resendKey ? 'Resend (HTTPS Port 443)' : brevoKey ? 'Brevo (HTTPS Port 443)' : 'SMTP (Nodemailer)',
     configuredHost: host,
     configuredPort: port,
+    hasResendKey: Boolean(resendKey),
+    hasBrevoKey: Boolean(brevoKey),
     configuredUser: user ? `${user.slice(0, 3)}***@${user.split('@')[1] || 'domain'}` : null,
     passLength: pass ? pass.length : 0,
     timestamp: new Date().toISOString(),
   };
 
-  if (!user || !pass) {
+  if (!resendKey && !brevoKey && (!user || !pass)) {
     return {
       success: false,
-      error: 'SMTP_USER or SMTP_PASS is missing in server environment variables.',
+      error: 'No email service configured. Set RESEND_API_KEY (recommended for Render) or SMTP_USER and SMTP_PASS in environment variables.',
       diagnostics,
     };
   }
@@ -240,6 +318,7 @@ async function testSmtpConnection(testRecipient) {
     return {
       success: true,
       message: `Test email successfully sent to ${to}`,
+      provider: result?.provider || 'smtp',
       messageId: result?.messageId || 'ok',
       diagnostics,
     };
@@ -256,6 +335,7 @@ async function testSmtpConnection(testRecipient) {
 }
 
 module.exports = { getTransporter, setTransporter, sendOtpEmail, sendPasswordResetOtpEmail, testSmtpConnection };
+
 
 
 
