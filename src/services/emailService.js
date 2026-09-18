@@ -1,53 +1,134 @@
 const nodemailer = require('nodemailer');
 
 let transporter = null;
+let fallbackTransporter = null;
 
-function createTransporterInstance() {
-  const user = process.env.SMTP_USER;
-  const pass = process.env.SMTP_PASS ? process.env.SMTP_PASS.replace(/\s+/g, '') : '';
+function sanitize(val) {
+  if (!val) return '';
+  return String(val).trim().replace(/^["']|["']$/g, '');
+}
+
+function getCredentials() {
+  const user = sanitize(process.env.SMTP_USER);
+  const pass = sanitize(process.env.SMTP_PASS).replace(/\s+/g, '');
+  return { user, pass };
+}
+
+function buildTransportOptions(port, secure) {
+  const { user, pass } = getCredentials();
+  const host = sanitize(process.env.SMTP_HOST) || 'smtp.gmail.com';
+
+  return {
+    host,
+    port,
+    secure,
+    auth: { user, pass },
+    tls: {
+      rejectUnauthorized: false,
+      minVersion: 'TLSv1.2',
+    },
+    // Force IPv4 to prevent IPv6 DNS timeout hangs on cloud hosts (Render, Railway, Heroku, AWS)
+    family: 4,
+    connectionTimeout: 15000,
+    greetingTimeout: 15000,
+    socketTimeout: 20000,
+  };
+}
+
+function createTransporterInstance(isFallback = false) {
+  const { user, pass } = getCredentials();
 
   if (!user || !pass) {
     throw new Error('SMTP_USER and SMTP_PASS must be set in .env for email sending');
   }
 
-  if (process.env.SMTP_HOST) {
-    return nodemailer.createTransport({
-      host: process.env.SMTP_HOST,
-      port: Number(process.env.SMTP_PORT) || 587,
-      secure: process.env.SMTP_SECURE === 'true' || Number(process.env.SMTP_PORT) === 465,
-      auth: { user, pass },
-      tls: {
-        rejectUnauthorized: false,
-      },
-      connectionTimeout: 15000,
-      greetingTimeout: 15000,
-      socketTimeout: 20000,
-    });
+  const configuredHost = sanitize(process.env.SMTP_HOST);
+  const configuredPort = Number(process.env.SMTP_PORT);
+  const configuredSecure = process.env.SMTP_SECURE === 'true';
+
+  if (isFallback) {
+    // If primary was 587 (or default), fallback to 465 SSL; if primary was 465, fallback to 587
+    const fallbackPort = configuredPort === 465 ? 587 : 465;
+    const fallbackSecure = fallbackPort === 465;
+    return nodemailer.createTransport(buildTransportOptions(fallbackPort, fallbackSecure));
   }
 
-  // Direct Gmail SMTP transport with fallback
-  return nodemailer.createTransport({
-    service: 'gmail',
-    auth: { user, pass },
-    tls: {
-      rejectUnauthorized: false,
-    },
-    connectionTimeout: 15000,
-    greetingTimeout: 15000,
-    socketTimeout: 20000,
-  });
+  const primaryPort = configuredPort || 587;
+  const primarySecure = configuredSecure || primaryPort === 465;
+
+  return nodemailer.createTransport(buildTransportOptions(primaryPort, primarySecure));
 }
 
 function getTransporter() {
   if (transporter) {
     return transporter;
   }
-  transporter = createTransporterInstance();
+  transporter = createTransporterInstance(false);
   return transporter;
+}
+
+function getFallbackTransporter() {
+  if (fallbackTransporter) {
+    return fallbackTransporter;
+  }
+  fallbackTransporter = createTransporterInstance(true);
+  return fallbackTransporter;
 }
 
 function setTransporter(customTransporter) {
   transporter = customTransporter;
+  fallbackTransporter = customTransporter;
+}
+
+function logEmailDiagnostics(err, context = 'Send Mail') {
+  const { user, pass } = getCredentials();
+  const maskedUser = user ? `${user.slice(0, 3)}***@${user.split('@')[1] || 'domain'}` : '(not set)';
+  const passLength = pass ? pass.length : 0;
+
+  console.error(`\n[Email Service Diagnostic] ${context} Failed:`);
+  console.error(`  - Error Message: ${err.message}`);
+  console.error(`  - Error Code: ${err.code || 'N/A'}`);
+  console.error(`  - SMTP Response Code: ${err.responseCode || err.response || 'N/A'}`);
+  console.error(`  - Configured User: ${maskedUser}`);
+  console.error(`  - Configured Pass Length: ${passLength} characters`);
+
+  if (err.code === 'EAUTH' || (err.response && String(err.response).includes('535'))) {
+    console.error('  👉 ACTION REQUIRED: Google rejected your SMTP credentials (535).');
+    console.error('     1. Ensure 2-Step Verification is turned ON for your Google account.');
+    console.error('     2. Generate a dedicated 16-character Google App Password (myaccount.google.com/apppasswords).');
+    console.error('     3. Set SMTP_PASS in your production dashboard (Render / Railway / Vercel) to that 16-character code (without quotes).');
+  } else if (err.code === 'ETIMEDOUT' || err.code === 'ECONNREFUSED' || err.code === 'ESOCKET') {
+    console.error(`  👉 ACTION REQUIRED: Network/Connection timeout (${err.code}).`);
+    console.error('     Your cloud provider may be blocking outbound port 587/465 or DNS resolution failed.');
+  }
+  console.error('');
+}
+
+async function sendMailWithAutoFallback(mailOptions, context = 'Email') {
+  // 1. Try with primary transporter (Port 587 STARTTLS)
+  try {
+    const primary = getTransporter();
+    return await primary.sendMail(mailOptions);
+  } catch (primaryErr) {
+    logEmailDiagnostics(primaryErr, `${context} (Primary Port Attempt)`);
+
+    // If transporter was custom mocked (e.g. tests), don't fallback to real SMTP
+    if (transporter && transporter !== fallbackTransporter) {
+      throw primaryErr;
+    }
+
+    // 2. Try with fallback transporter (Port 465 SSL)
+    console.warn(`[Email Service] Attempting fallback transporter for ${mailOptions.to}...`);
+    try {
+      const fallback = getFallbackTransporter();
+      const result = await fallback.sendMail(mailOptions);
+      console.log(`[Email Service] Fallback delivery successful to ${mailOptions.to}. MessageId: ${result?.messageId || 'ok'}`);
+      return result;
+    } catch (fallbackErr) {
+      logEmailDiagnostics(fallbackErr, `${context} (Fallback Port Attempt)`);
+      throw fallbackErr;
+    }
+  }
 }
 
 /**
@@ -57,7 +138,7 @@ function setTransporter(customTransporter) {
  * @param {string} otp  - 6-digit OTP code
  */
 async function sendOtpEmail(to, name, otp) {
-  const fromAddress = process.env.SMTP_FROM || process.env.SMTP_USER || 'noreply@splitup.app';
+  const fromAddress = sanitize(process.env.SMTP_FROM) || sanitize(process.env.SMTP_USER) || 'noreply@splitup.app';
   const mailOptions = {
     from: `"SplitUp" <${fromAddress}>`,
     to,
@@ -86,15 +167,7 @@ async function sendOtpEmail(to, name, otp) {
     `,
   };
 
-  try {
-    const t = getTransporter();
-    return await t.sendMail(mailOptions);
-  } catch (err) {
-    console.warn('[Email Service] Initial OTP send failed, refreshing transporter and retrying:', err.message);
-    transporter = null;
-    const freshTransporter = getTransporter();
-    return await freshTransporter.sendMail(mailOptions);
-  }
+  return await sendMailWithAutoFallback(mailOptions, 'Registration OTP');
 }
 
 /**
@@ -104,7 +177,7 @@ async function sendOtpEmail(to, name, otp) {
  * @param {string} otp  - 6-digit OTP code
  */
 async function sendPasswordResetOtpEmail(to, name, otp) {
-  const fromAddress = process.env.SMTP_FROM || process.env.SMTP_USER || 'noreply@splitup.app';
+  const fromAddress = sanitize(process.env.SMTP_FROM) || sanitize(process.env.SMTP_USER) || 'noreply@splitup.app';
   const mailOptions = {
     from: `"SplitUp Security" <${fromAddress}>`,
     to,
@@ -133,16 +206,9 @@ async function sendPasswordResetOtpEmail(to, name, otp) {
     `,
   };
 
-  try {
-    const t = getTransporter();
-    return await t.sendMail(mailOptions);
-  } catch (err) {
-    console.warn('[Email Service] Initial Password Reset send failed, refreshing transporter and retrying:', err.message);
-    transporter = null;
-    const freshTransporter = getTransporter();
-    return await freshTransporter.sendMail(mailOptions);
-  }
+  return await sendMailWithAutoFallback(mailOptions, 'Password Reset OTP');
 }
 
 module.exports = { getTransporter, setTransporter, sendOtpEmail, sendPasswordResetOtpEmail };
+
 
