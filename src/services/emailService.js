@@ -209,6 +209,53 @@ async function sendPasswordResetOtpEmail(to, name, otp) {
   return await sendMailWithAutoFallback(mailOptions, 'Password Reset OTP');
 }
 
-module.exports = { getTransporter, setTransporter, sendOtpEmail, sendPasswordResetOtpEmail };
+/**
+ * Diagnostic helper to verify SMTP delivery in production
+ * @param {string} testRecipient - Optional recipient email address
+ */
+async function testSmtpConnection(testRecipient) {
+  const { user, pass } = getCredentials();
+  const host = sanitize(process.env.SMTP_HOST) || 'smtp.gmail.com';
+  const port = Number(process.env.SMTP_PORT) || 587;
+  const to = testRecipient || user;
+
+  const diagnostics = {
+    configuredHost: host,
+    configuredPort: port,
+    configuredUser: user ? `${user.slice(0, 3)}***@${user.split('@')[1] || 'domain'}` : null,
+    passLength: pass ? pass.length : 0,
+    timestamp: new Date().toISOString(),
+  };
+
+  if (!user || !pass) {
+    return {
+      success: false,
+      error: 'SMTP_USER or SMTP_PASS is missing in server environment variables.',
+      diagnostics,
+    };
+  }
+
+  try {
+    const result = await sendOtpEmail(to, 'SplitUp Admin', '998877');
+    return {
+      success: true,
+      message: `Test email successfully sent to ${to}`,
+      messageId: result?.messageId || 'ok',
+      diagnostics,
+    };
+  } catch (err) {
+    return {
+      success: false,
+      error: err.message,
+      code: err.code || null,
+      response: err.response || null,
+      command: err.command || null,
+      diagnostics,
+    };
+  }
+}
+
+module.exports = { getTransporter, setTransporter, sendOtpEmail, sendPasswordResetOtpEmail, testSmtpConnection };
+
 
 

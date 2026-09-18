@@ -6,10 +6,18 @@ const { z } = require('zod');
 
 const prisma = require('../lib/prisma');
 const { sanitizeMiddleware } = require('../middleware/sanitize');
-const { sendOtpEmail, sendPasswordResetOtpEmail } = require('../services/emailService');
+const { sendOtpEmail, sendPasswordResetOtpEmail, testSmtpConnection } = require('../services/emailService');
 
 const router = express.Router();
 router.use(sanitizeMiddleware);
+
+// ── GET /test-email (Instant production SMTP diagnostic endpoint) ────────────
+router.get('/test-email', async (req, res) => {
+  const targetEmail = req.query.to ? String(req.query.to).trim() : null;
+  const result = await testSmtpConnection(targetEmail);
+  return res.status(result.success ? 200 : 500).json(result);
+});
+
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
