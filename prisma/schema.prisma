@@ -20,6 +20,7 @@ model User {
   adminOfGroups        Group[]              @relation("GroupAdmin")
   joinRequests         JoinRequest[]
   paidExpenses         Expense[]            @relation("ExpensePaidBy")
+  createdExpenses      Expense[]            @relation("ExpenseCreatedBy")
   expenseSplits        ExpenseSplit[]
   settlementsFrom      Settlement[]         @relation("SettlementFrom")
   settlementsTo        Settlement[]         @relation("SettlementTo")
@@ -75,6 +76,7 @@ model Expense {
   id          String               @id @default(cuid())
   groupId     String
   paidById    String
+  createdById String?
   amount      Decimal              @db.Decimal(12, 2)
   category    String
   description String?
@@ -86,9 +88,10 @@ model Expense {
   editHistory ExpenseEditHistory[]
   concerns    TransactionConcern[]
 
-  group  Group          @relation(fields: [groupId], references: [id], onDelete: Cascade)
-  paidBy User           @relation("ExpensePaidBy", fields: [paidById], references: [id], onDelete: Restrict)
-  splits ExpenseSplit[]
+  group     Group          @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  paidBy    User           @relation("ExpensePaidBy", fields: [paidById], references: [id], onDelete: Restrict)
+  createdBy User?          @relation("ExpenseCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  splits    ExpenseSplit[]
 }
 
 model ExpenseSplit {

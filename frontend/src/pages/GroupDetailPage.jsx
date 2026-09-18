@@ -515,6 +515,11 @@ export default function GroupDetailPage() {
                 <tbody>
                   {expenses.map((expense) => {
                     const isPayer = expense.paidBy?.id === currentUserId || expense.paidById === currentUserId;
+                    const isCreator = Boolean(
+                      expense.createdById
+                        ? (expense.createdById === currentUserId || expense.createdBy?.id === currentUserId)
+                        : (expense.paidById === currentUserId || expense.paidBy?.id === currentUserId)
+                    );
                     const isDeleted = Boolean(expense.isDeleted);
                     const mySplit = expense.splits?.find((s) => s.userId === currentUserId || s.user?.id === currentUserId);
                     const isEdited = !isDeleted && (expense.isEdited || (expense.editHistory && expense.editHistory.length > 0));
@@ -664,7 +669,7 @@ export default function GroupDetailPage() {
                               </button>
                             ) : (
                               <>
-                                {!isEdited && isPayer && (
+                                {!isEdited && isCreator && (
                                   <button
                                     type="button"
                                     className="btn-secondary"
@@ -673,6 +678,7 @@ export default function GroupDetailPage() {
                                       e.stopPropagation();
                                       setEditingExpense(expense);
                                     }}
+                                    title="Edit transaction"
                                   >
                                     Edit
                                   </button>

@@ -318,12 +318,13 @@ export default function EditExpenseModal({ groupId, expense, members, currentUse
                       disabled={isLastIncluded}
                       onChange={(e) => {
                         const nowExcluded = !e.target.checked;
-                        setExcludedMembers((prev) => {
-                          const next = { ...prev };
-                          if (nowExcluded) next[member.id] = true;
-                          else delete next[member.id];
-                          return next;
-                        });
+                        const next = { ...excludedMembers };
+                        if (nowExcluded) next[member.id] = true;
+                        else delete next[member.id];
+                        setExcludedMembers(next);
+                        if (!isCustomSplit) {
+                          setMemberShares(computeEvenSplits(amount, members, next, paidById));
+                        }
                       }}
                     />
                     <span>

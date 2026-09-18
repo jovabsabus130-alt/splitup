@@ -121,6 +121,7 @@ router.post('/groups/:groupId/expenses', async (req, res, next) => {
         data: {
           groupId,
           paidById: expensePayerId,
+          createdById: req.userId,
           amount: expenseAmount,
           category,
           description: description || null,
@@ -239,6 +240,13 @@ router.get('/groups/:groupId/expenses', async (req, res, next) => {
             email: true,
           },
         },
+        createdBy: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+          },
+        },
         splits: {
           include: {
             user: {
@@ -328,11 +336,15 @@ router.put('/groups/:groupId/expenses/:expenseId', async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Expense not found' });
     }
 
-    // Only the creator / payer of the transaction can edit it
-    if (existing.paidById !== req.userId) {
+    // Strictly authorize ONLY the person who logged/created this transaction (with fallback for legacy records)
+    const isCreator = existing.createdById
+      ? existing.createdById === req.userId
+      : existing.paidById === req.userId;
+
+    if (!isCreator) {
       return res.status(403).json({
         success: false,
-        message: 'Only the member who created this transaction can edit it.',
+        message: 'Only the person who logged this transaction has permission to edit it.',
       });
     }
 

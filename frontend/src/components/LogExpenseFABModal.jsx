@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import api from '../lib/api';
 import { PREDEFINED_CATEGORIES } from '../lib/constants';
 import CategoryPicker from './CategoryPicker';
-import { autoAdjustPercentages, calculateSharesByMode, parseFraction, validateSplitMode } from '../lib/splitCalculations';
+import { autoAdjustPercentages, calculateSharesByMode, calculateWeightedSplits, parseFraction, validateSplitMode } from '../lib/splitCalculations';
 
 export default function LogExpenseFABModal({
   isOpen,
@@ -47,6 +47,30 @@ export default function LogExpenseFABModal({
     const raw = localStorage.getItem('splitup_user');
     return raw ? JSON.parse(raw) : null;
   }, []);
+
+  // Cleanly reset all form states to pristine default values whenever modal is opened (no leftover memory)
+  useEffect(() => {
+    if (isOpen) {
+      setAmount('');
+      setDescription('');
+      setCategory('Food');
+      setSplitMode('custom');
+      setExcludedMembers({});
+      setPercentages({});
+      setFractions({});
+      setCounts({});
+      setCustomAmounts({});
+      setAiText('');
+      setIsParsing(false);
+      setParsedExpense(null);
+      setSubmitting(false);
+      setError('');
+      setSuccessMsg('');
+      setActiveTab('log');
+      setIsPersonalExpense(false);
+      setPaidById(currentUser?.id || initialMembers[0]?.id || '');
+    }
+  }, [isOpen]);
 
   async function getOrCreatePersonalGroup() {
     const existing = groups.find((g) => {
@@ -122,14 +146,14 @@ export default function LogExpenseFABModal({
     const numAmount = parseFloat(amount) || 0;
 
     if (newMode === 'percentage') {
-      const defaultPct = (100 / count).toFixed(1);
+      const defaultPct = count > 0 ? (100 / count).toFixed(1) : '0';
       const newPercentages = {};
       members.forEach((m) => {
         newPercentages[m.id] = excludedMembers[m.id] ? '0' : defaultPct;
       });
       setPercentages(newPercentages);
     } else if (newMode === 'fraction') {
-      const defaultFrac = `1/${count}`;
+      const defaultFrac = count > 0 ? `1/${count}` : '0';
       const newFractions = {};
       members.forEach((m) => {
         newFractions[m.id] = excludedMembers[m.id] ? '0' : defaultFrac;
@@ -142,28 +166,88 @@ export default function LogExpenseFABModal({
       });
       setCounts(newCounts);
     } else if (newMode === 'custom') {
-      const defaultCustom = (numAmount / count).toFixed(2);
-      const newCustom = {};
+      const weights = {};
       members.forEach((m) => {
-        newCustom[m.id] = excludedMembers[m.id] ? '0.00' : defaultCustom;
+        weights[m.id] = excludedMembers[m.id] ? 0 : 1;
       });
-      setCustomAmounts(newCustom);
+      const autoSplits = calculateWeightedSplits({
+        totalAmount: numAmount,
+        members,
+        excludedMembers,
+        weights,
+        payerId: paidById || currentUser?.id,
+      });
+      setCustomAmounts(autoSplits);
     }
   }
 
-  // Handle Amount Change - Update Custom amounts if unedited
+  // Handle Member Inclusion / Exclusion with Automatic Share Recalculation across remaining members
+  function handleToggleMemberExclude(memberId, isNowIncluded) {
+    const nextExcluded = { ...excludedMembers };
+    if (!isNowIncluded) {
+      nextExcluded[memberId] = true;
+    } else {
+      delete nextExcluded[memberId];
+    }
+    setExcludedMembers(nextExcluded);
+
+    const included = members.filter((m) => !nextExcluded[m.id]);
+    const count = included.length || 1;
+    const numAmount = parseFloat(amount) || 0;
+
+    if (splitMode === 'custom') {
+      const weights = {};
+      members.forEach((m) => {
+        weights[m.id] = nextExcluded[m.id] ? 0 : 1;
+      });
+      const autoSplits = calculateWeightedSplits({
+        totalAmount: numAmount,
+        members,
+        excludedMembers: nextExcluded,
+        weights,
+        payerId: paidById || currentUser?.id,
+      });
+      setCustomAmounts(autoSplits);
+    } else if (splitMode === 'percentage') {
+      const defaultPct = count > 0 ? (100 / count).toFixed(1) : '0';
+      const newPercentages = {};
+      members.forEach((m) => {
+        newPercentages[m.id] = nextExcluded[m.id] ? '0' : defaultPct;
+      });
+      setPercentages(newPercentages);
+    } else if (splitMode === 'fraction') {
+      const defaultFrac = count > 0 ? `1/${count}` : '0';
+      const newFractions = {};
+      members.forEach((m) => {
+        newFractions[m.id] = nextExcluded[m.id] ? '0' : defaultFrac;
+      });
+      setFractions(newFractions);
+    } else if (splitMode === 'count') {
+      const newCounts = {};
+      members.forEach((m) => {
+        newCounts[m.id] = nextExcluded[m.id] ? '0' : '1';
+      });
+      setCounts(newCounts);
+    }
+  }
+
+  // Handle Amount Change - Update Custom amounts with exact penny split
   function handleAmountChange(newVal) {
     setAmount(newVal);
     if (splitMode === 'custom') {
       const num = parseFloat(newVal) || 0;
-      const included = members.filter((m) => !excludedMembers[m.id]);
-      const count = included.length || 1;
-      const share = (num / count).toFixed(2);
-      const newCustom = {};
+      const weights = {};
       members.forEach((m) => {
-        newCustom[m.id] = excludedMembers[m.id] ? '0.00' : share;
+        weights[m.id] = excludedMembers[m.id] ? 0 : 1;
       });
-      setCustomAmounts(newCustom);
+      const autoSplits = calculateWeightedSplits({
+        totalAmount: num,
+        members,
+        excludedMembers,
+        weights,
+        payerId: paidById || currentUser?.id,
+      });
+      setCustomAmounts(autoSplits);
     }
   }
 
@@ -906,10 +990,7 @@ export default function LogExpenseFABModal({
                           <input
                             type="checkbox"
                             checked={!isExcluded}
-                            onChange={(e) => {
-                              const checked = e.target.checked;
-                              setExcludedMembers((prev) => ({ ...prev, [m.id]: !checked }));
-                            }}
+                            onChange={(e) => handleToggleMemberExclude(m.id, e.target.checked)}
                           />
                           <div className="group-avatar-mini" style={{ width: '26px', height: '26px', fontSize: '11px', flexShrink: 0 }}>
                             {m.name ? m.name.charAt(0).toUpperCase() : 'U'}

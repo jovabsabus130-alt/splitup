@@ -24,6 +24,12 @@ export default function TransactionDetailModal({
     expense.payer?.isYou
   );
 
+  const isCreator = Boolean(
+    expense.createdById
+      ? (expense.createdById === currentUserId || expense.createdBy?.id === currentUserId)
+      : (expense.paidById === currentUserId || expense.paidBy?.id === currentUserId)
+  );
+
   const payerName = isPayer
     ? 'You'
     : expense.paidBy?.name || expense.payer?.name || 'Someone';
@@ -516,8 +522,8 @@ export default function TransactionDetailModal({
               </button>
             )}
 
-            {/* Edit Button (available for payer if not deleted) */}
-            {!isDeleted && isPayer && onEdit && (
+            {/* Edit Button (available strictly for the person who logged/created the transaction) */}
+            {!isDeleted && !expense.isEdited && isCreator && onEdit && (
               <button
                 type="button"
                 className="btn-primary"
@@ -526,13 +532,14 @@ export default function TransactionDetailModal({
                   onEdit(expense);
                 }}
                 style={{ fontSize: '12px', height: '32px', padding: '0 12px' }}
+                title="Edit transaction details and splits (available to transaction creator)"
               >
                 ✏️ Edit
               </button>
             )}
 
-            {/* Delete Button (available for payer/creator) */}
-            {!isDeleted && isPayer && onDelete && (
+            {/* Delete Button */}
+            {!isDeleted && onDelete && (isPayer || group?.adminId === currentUserId) && (
               <button
                 type="button"
                 className="btn-danger"
@@ -541,7 +548,7 @@ export default function TransactionDetailModal({
                   onDelete(expense);
                 }}
                 style={{ fontSize: '12px', height: '32px', padding: '0 10px' }}
-                title="Delete accidental duplicate"
+                title="Delete transaction"
               >
                 🗑️ Delete
               </button>
