@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { SignUp } from '@clerk/clerk-react';
+import { SignUp, useAuth } from '@clerk/clerk-react';
 import api from '../lib/api';
 
 const isClerkEnabled = Boolean(
@@ -8,6 +8,18 @@ const isClerkEnabled = Boolean(
   import.meta.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
 );
 
+function ClerkAuthSync({ redirectPath }) {
+  const { isLoaded, isSignedIn } = useAuth();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    if (isLoaded && isSignedIn) {
+      navigate(redirectPath, { replace: true });
+    }
+  }, [isLoaded, isSignedIn, navigate, redirectPath]);
+
+  return null;
+}
 
 export default function RegisterPage() {
   const navigate = useNavigate();
@@ -59,11 +71,13 @@ export default function RegisterPage() {
         </div>
 
         {isClerkEnabled ? (
-          <div style={{ display: 'flex', justifyContent: 'center', margin: 'var(--space-2) 0' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', margin: 'var(--space-2) 0' }}>
+            <ClerkAuthSync redirectPath={redirectPath} />
             <SignUp
               routing="hash"
               signInUrl="/login"
               fallbackRedirectUrl="/dashboard"
+              forceRedirectUrl="/dashboard"
             />
           </div>
         ) : (

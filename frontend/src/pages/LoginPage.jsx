@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { SignIn } from '@clerk/clerk-react';
+import { SignIn, useAuth } from '@clerk/clerk-react';
 import api from '../lib/api';
 
 const isClerkEnabled = Boolean(
@@ -8,6 +8,18 @@ const isClerkEnabled = Boolean(
   import.meta.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
 );
 
+function ClerkAuthSync({ redirectPath }) {
+  const { isLoaded, isSignedIn } = useAuth();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    if (isLoaded && isSignedIn) {
+      navigate(redirectPath, { replace: true });
+    }
+  }, [isLoaded, isSignedIn, navigate, redirectPath]);
+
+  return null;
+}
 
 export default function LoginPage() {
   const navigate = useNavigate();
@@ -27,6 +39,7 @@ export default function LoginPage() {
   const [forgotError, setForgotError] = useState('');
 
   const redirectPath = location.state?.from?.pathname || '/dashboard';
+
 
   async function handleSubmit(event) {
     event.preventDefault();
@@ -109,11 +122,13 @@ export default function LoginPage() {
         </div>
 
         {isClerkEnabled ? (
-          <div style={{ display: 'flex', justifyContent: 'center', margin: 'var(--space-2) 0' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', margin: 'var(--space-2) 0' }}>
+            <ClerkAuthSync redirectPath={redirectPath} />
             <SignIn
               routing="hash"
               signUpUrl="/register"
               fallbackRedirectUrl="/dashboard"
+              forceRedirectUrl="/dashboard"
             />
           </div>
         ) : (

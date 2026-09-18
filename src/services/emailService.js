@@ -40,7 +40,7 @@ function createTransporterInstance(isFallback = false) {
 
   if (!user || !pass) {
     throw new Error('SMTP_USER and SMTP_PASS must be set in .env for email sending');
-  }
+  } 
 
   const configuredHost = sanitize(process.env.SMTP_HOST);
   const configuredPort = Number(process.env.SMTP_PORT);
