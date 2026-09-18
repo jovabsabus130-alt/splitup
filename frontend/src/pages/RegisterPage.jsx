@@ -94,6 +94,7 @@ export default function RegisterPage() {
                 onChange={(event) => setForm((prev) => ({ ...prev, password: event.target.value }))}
                 required
                 minLength={6}
+                autoComplete="new-password"
               />
             </label>
 

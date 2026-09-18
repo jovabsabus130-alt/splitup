@@ -145,6 +145,7 @@ export default function LoginPage() {
                 value={form.password}
                 onChange={(event) => setForm((prev) => ({ ...prev, password: event.target.value }))}
                 required
+                autoComplete="current-password"
               />
             </label>
             {error ? <div className="error-text">{error}</div> : null}
