@@ -5,58 +5,38 @@ import CategoryPicker from './CategoryPicker';
 import { autoAdjustPercentages, calculateSharesByMode, calculateWeightedSplits, parseFraction, validateSplitMode } from '../lib/splitCalculations';
 
 function evaluateCalculatorExpression(expression) {
-  const compactExpression = expression.replace(/\s+/g, '');
-  const tokens = compactExpression.match(/(?:\d+(?:\.\d+)?|\.\d+|[+\-*/()])/g);
-  if (!tokens || tokens.join('') !== compactExpression || !/\d/.test(compactExpression)) {
+  const tokens = expression.replace(/\s+/g, '').match(/(?:\d+(?:\.\d+)?|\.\d+|[+\-*/])/g);
+  if (!tokens || tokens.join('') !== expression.replace(/\s+/g, '') || !/\d/.test(expression)) {
     throw new Error('Invalid expression');
   }
 
-  let position = 0;
-  function parsePrimary() {
-    const token = tokens[position];
-    if (token === '+' || token === '-') {
-      position += 1;
-      const value = parsePrimary();
-      return token === '-' ? -value : value;
+  const values = [];
+  const operators = [];
+  const precedence = { '+': 1, '-': 1, '*': 2, '/': 2 };
+  const applyOperator = () => {
+    const operator = operators.pop();
+    const right = values.pop();
+    const left = values.pop();
+    if (left === undefined || right === undefined || (operator === '/' && right === 0)) {
+      throw new Error('Invalid expression');
     }
-    if (token === '(') {
-      position += 1;
-      const value = parseAdditive();
-      if (tokens[position] !== ')') throw new Error('Invalid expression');
-      position += 1;
-      return value;
-    }
-    if (token && /^\d|\./.test(token)) {
-      position += 1;
-      return Number(token);
-    }
-    throw new Error('Invalid expression');
-  }
+    values.push(operator === '+' ? left + right : operator === '-' ? left - right : operator === '*' ? left * right : left / right);
+  };
 
-  function parseMultiplicative() {
-    let value = parsePrimary();
-    while (tokens[position] === '*' || tokens[position] === '/') {
-      const operator = tokens[position++];
-      const right = parsePrimary();
-      if (operator === '/' && right === 0) throw new Error('Invalid expression');
-      value = operator === '*' ? value * right : value / right;
+  tokens.forEach((token) => {
+    if (/^\d|\./.test(token)) {
+      values.push(Number(token));
+      return;
     }
-    return value;
-  }
-
-  function parseAdditive() {
-    let value = parseMultiplicative();
-    while (tokens[position] === '+' || tokens[position] === '-') {
-      const operator = tokens[position++];
-      const right = parseMultiplicative();
-      value = operator === '+' ? value + right : value - right;
+    while (operators.length && precedence[operators[operators.length - 1]] >= precedence[token]) {
+      applyOperator();
     }
-    return value;
-  }
+    operators.push(token);
+  });
+  while (operators.length) applyOperator();
 
-  const result = parseAdditive();
-  if (position !== tokens.length || !Number.isFinite(result)) throw new Error('Invalid expression');
-  return result;
+  if (values.length !== 1 || !Number.isFinite(values[0])) throw new Error('Invalid expression');
+  return values[0];
 }
 
 export default function LogExpenseFABModal({
@@ -80,7 +60,6 @@ export default function LogExpenseFABModal({
   const [amount, setAmount] = useState('');
   const [calculatorExpression, setCalculatorExpression] = useState('');
   const [showCalculator, setShowCalculator] = useState(false);
-  const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.matchMedia('(max-width: 768px)').matches);
   const [description, setDescription] = useState('');
   const [category, setCategory] = useState('Food');
   const [paidById, setPaidById] = useState('');
@@ -131,14 +110,6 @@ export default function LogExpenseFABModal({
       setPaidById(currentUser?.id || initialMembers[0]?.id || '');
     }
   }, [isOpen]);
-
-  useEffect(() => {
-    const mediaQuery = window.matchMedia('(max-width: 768px)');
-    const handleViewportChange = () => setIsMobile(mediaQuery.matches);
-    handleViewportChange();
-    mediaQuery.addEventListener?.('change', handleViewportChange);
-    return () => mediaQuery.removeEventListener?.('change', handleViewportChange);
-  }, []);
 
   async function getOrCreatePersonalGroup() {
     const existing = groups.find((g) => {
@@ -333,11 +304,6 @@ export default function LogExpenseFABModal({
     } catch {
       setError('Enter a valid calculation, such as 120 + 80.');
     }
-  }
-
-  function openCalculator() {
-    setCalculatorExpression((previous) => previous || amount);
-    setShowCalculator(true);
   }
 
   // Compute live split shares using standard calculation engine
@@ -881,13 +847,11 @@ export default function LogExpenseFABModal({
               <label className="form-label" style={{ margin: 0, width: '100%', boxSizing: 'border-box' }}>
                 Amount (₹)
                 <input
-                  type={isMobile ? 'text' : 'number'}
-                  inputMode={isMobile ? 'none' : 'decimal'}
-                  step={isMobile ? undefined : '0.01'}
+                  type="number"
+                  step="0.01"
                   placeholder="0.00"
                   value={amount}
                   onChange={(e) => handleAmountChange(e.target.value)}
-                  onFocus={isMobile ? openCalculator : undefined}
                   required
                   autoFocus
                   style={{ width: '100%', fontSize: '16px', fontWeight: 700, boxSizing: 'border-box' }}
@@ -902,7 +866,6 @@ export default function LogExpenseFABModal({
                 </button>
                 {showCalculator && (
                   <div
-                    className="expense-calculator"
                     style={{
                       display: 'grid',
                       gridTemplateColumns: 'repeat(4, 1fr)',
@@ -928,25 +891,26 @@ export default function LogExpenseFABModal({
                       }}
                       style={{ gridColumn: '1 / -1', width: '100%', boxSizing: 'border-box' }}
                     />
-                    {['(', ')', '⌫', 'Clear', '7', '8', '9', '/', '4', '5', '6', '*', '1', '2', '3', '-', '0', '.', '+'].map((key) => (
+                    {['7', '8', '9', '+', '4', '5', '6', '-', '1', '2', '3', '*', '0', '.', '⌫', '/'].map((key) => (
                       <button
                         key={key}
                         type="button"
                         className="btn-secondary"
-                        onClick={() => {
-                          if (key === '⌫') {
-                            setCalculatorExpression((previous) => previous.slice(0, -1));
-                          } else if (key === 'Clear') {
-                            setCalculatorExpression('');
-                          } else {
-                            handleCalculatorInput(key);
-                          }
-                        }}
+                        onClick={() => key === '⌫'
+                          ? setCalculatorExpression((previous) => previous.slice(0, -1))
+                          : handleCalculatorInput(key)}
                         style={{ minHeight: '34px', padding: '4px' }}
                       >
                         {key}
                       </button>
                     ))}
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      onClick={() => setCalculatorExpression('')}
+                    >
+                      Clear
+                    </button>
                     <button
                       type="button"
                       className="btn-primary"
