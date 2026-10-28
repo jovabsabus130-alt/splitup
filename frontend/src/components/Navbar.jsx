@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import EditProfileModal from './EditProfileModal';
+import { logoutUser } from '../lib/session';
 
 export default function Navbar({ groupName, groupId }) {
   const navigate = useNavigate();
@@ -40,15 +41,12 @@ export default function Navbar({ groupName, groupId }) {
     };
   }, []);
 
-  function logout() {
-    if (window.Clerk && window.Clerk.signOut) {
-      window.Clerk.signOut();
+  async function logout() {
+    try {
+      await logoutUser();
+    } finally {
+      navigate('/login', { replace: true });
     }
-    localStorage.removeItem('token');
-    localStorage.removeItem('splitup_token');
-    localStorage.removeItem('splitup_user');
-    localStorage.removeItem('splitup_custom_name');
-    navigate('/login');
   }
 
   const userName = currentUser?.name || '';

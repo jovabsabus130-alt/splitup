@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import api from '../lib/api';
 import EditProfileModal from './EditProfileModal';
+import { logoutUser } from '../lib/session';
 
 export default function AppSidebar({
   mobileOpen,
@@ -120,11 +121,14 @@ export default function AppSidebar({
     }
   }
 
-  function handleLogout() {
-    localStorage.removeItem('token');
-    localStorage.removeItem('splitup_token');
-    localStorage.removeItem('splitup_user');
-    navigate('/login');
+  async function handleLogout() {
+    try {
+      await logoutUser();
+      navigate('/login', { replace: true });
+    } catch {
+      // Clear local credentials and still leave the protected area if Clerk sign-out fails.
+      navigate('/login', { replace: true });
+    }
   }
 
   const isDashboardActive = location.pathname === '/dashboard' || location.pathname === '/';

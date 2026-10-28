@@ -4,6 +4,41 @@ import { PREDEFINED_CATEGORIES } from '../lib/constants';
 import CategoryPicker from './CategoryPicker';
 import { autoAdjustPercentages, calculateSharesByMode, calculateWeightedSplits, parseFraction, validateSplitMode } from '../lib/splitCalculations';
 
+function evaluateCalculatorExpression(expression) {
+  const tokens = expression.replace(/\s+/g, '').match(/(?:\d+(?:\.\d+)?|\.\d+|[+\-*/])/g);
+  if (!tokens || tokens.join('') !== expression.replace(/\s+/g, '') || !/\d/.test(expression)) {
+    throw new Error('Invalid expression');
+  }
+
+  const values = [];
+  const operators = [];
+  const precedence = { '+': 1, '-': 1, '*': 2, '/': 2 };
+  const applyOperator = () => {
+    const operator = operators.pop();
+    const right = values.pop();
+    const left = values.pop();
+    if (left === undefined || right === undefined || (operator === '/' && right === 0)) {
+      throw new Error('Invalid expression');
+    }
+    values.push(operator === '+' ? left + right : operator === '-' ? left - right : operator === '*' ? left * right : left / right);
+  };
+
+  tokens.forEach((token) => {
+    if (/^\d|\./.test(token)) {
+      values.push(Number(token));
+      return;
+    }
+    while (operators.length && precedence[operators[operators.length - 1]] >= precedence[token]) {
+      applyOperator();
+    }
+    operators.push(token);
+  });
+  while (operators.length) applyOperator();
+
+  if (values.length !== 1 || !Number.isFinite(values[0])) throw new Error('Invalid expression');
+  return values[0];
+}
+
 export default function LogExpenseFABModal({
   isOpen,
   onClose,
@@ -23,6 +58,8 @@ export default function LogExpenseFABModal({
 
   // Form State for "Log a transaction"
   const [amount, setAmount] = useState('');
+  const [calculatorExpression, setCalculatorExpression] = useState('');
+  const [showCalculator, setShowCalculator] = useState(false);
   const [description, setDescription] = useState('');
   const [category, setCategory] = useState('Food');
   const [paidById, setPaidById] = useState('');
@@ -52,6 +89,8 @@ export default function LogExpenseFABModal({
   useEffect(() => {
     if (isOpen) {
       setAmount('');
+      setCalculatorExpression('');
+      setShowCalculator(false);
       setDescription('');
       setCategory('Food');
       setSplitMode('custom');
@@ -248,6 +287,22 @@ export default function LogExpenseFABModal({
         payerId: paidById || currentUser?.id,
       });
       setCustomAmounts(autoSplits);
+    }
+
+  }
+
+  function handleCalculatorInput(value) {
+    setCalculatorExpression((previous) => `${previous}${value}`);
+  }
+
+  function calculateAmount() {
+    try {
+      const result = evaluateCalculatorExpression(calculatorExpression);
+      handleAmountChange(result.toFixed(2));
+      setCalculatorExpression(result.toFixed(2));
+      setError('');
+    } catch {
+      setError('Enter a valid calculation, such as 120 + 80.');
     }
   }
 
@@ -801,6 +856,71 @@ export default function LogExpenseFABModal({
                   autoFocus
                   style={{ width: '100%', fontSize: '16px', fontWeight: 700, boxSizing: 'border-box' }}
                 />
+                <button
+                  type="button"
+                  className="btn-ghost"
+                  onClick={() => setShowCalculator((previous) => !previous)}
+                  style={{ alignSelf: 'flex-start', marginTop: '6px', fontSize: '12px' }}
+                >
+                  {showCalculator ? 'Hide calculator' : 'Use calculator'}
+                </button>
+                {showCalculator && (
+                  <div
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: 'repeat(4, 1fr)',
+                      gap: '6px',
+                      padding: '8px',
+                      border: '1px solid var(--border-subtle)',
+                      borderRadius: 'var(--radius-md)',
+                      background: 'var(--bg-subtle)',
+                    }}
+                  >
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      aria-label="Calculator expression"
+                      placeholder="e.g. 120 + 80"
+                      value={calculatorExpression}
+                      onChange={(e) => setCalculatorExpression(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          calculateAmount();
+                        }
+                      }}
+                      style={{ gridColumn: '1 / -1', width: '100%', boxSizing: 'border-box' }}
+                    />
+                    {['7', '8', '9', '+', '4', '5', '6', '-', '1', '2', '3', '*', '0', '.', '⌫', '/'].map((key) => (
+                      <button
+                        key={key}
+                        type="button"
+                        className="btn-secondary"
+                        onClick={() => key === '⌫'
+                          ? setCalculatorExpression((previous) => previous.slice(0, -1))
+                          : handleCalculatorInput(key)}
+                        style={{ minHeight: '34px', padding: '4px' }}
+                      >
+                        {key}
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      onClick={() => setCalculatorExpression('')}
+                    >
+                      Clear
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-primary"
+                      onClick={calculateAmount}
+                      style={{ gridColumn: '2 / -1' }}
+                    >
+                      Use result
+                    </button>
+                  </div>
+                )}
               </label>
 
               <label className="form-label" style={{ margin: 0, width: '100%', boxSizing: 'border-box' }}>
